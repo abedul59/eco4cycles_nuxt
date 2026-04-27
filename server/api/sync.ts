@@ -1,3 +1,4 @@
+// server/api/sync.ts
 import { defineEventHandler } from 'h3'
 import { serverSupabaseClient } from '#supabase/server'
 
@@ -120,24 +121,69 @@ export default defineEventHandler(async (event) => {
   if (retail_yoy && retail_yoy.trend_rebound) { scores.bottom++; details.bottom.push(`零售提早反彈：最新YoY ${retail_yoy.yoy_now}% > 3個月前`); }
   if (pmi && pmi.latest > 42.0 && !pmi.trend_down) { scores.bottom++; details.bottom.push(`PMI 觸底回升：最新 ${pmi.latest}`); }
 
-  // 階層式決策樹
-  let verdict = "", strategy = ""
+  // 階層式決策樹 (基礎判定)
+  let baseVerdict = "", strategy = ""
   if (scores.recession >= 1) {
-    if (scores.bottom >= 2) { verdict = "🥶 衰退期 (末端) - 底部反轉曙光已現"; strategy = "絕佳入市時機！執行 U 型扣款分批大買股票，持有長債享受降息紅利，高收益債亦可搶跌深反彈。"; } 
-    else { verdict = "🥶 衰退期 (主跌段) - 景氣嚴冬"; strategy = "重壓無風險長天期公債與美元避險，股市僅限小額定期定額，切勿輕易 All-in 猜底。"; }
+    if (scores.bottom >= 2) { baseVerdict = "🥶 衰退期 (末端) - 底部反轉曙光已現"; strategy = "絕佳入市時機！執行 U 型扣款分批大買股票，持有長債享受降息紅利，高收益債亦可搶跌深反彈。"; } 
+    else { baseVerdict = "🥶 衰退期 (主跌段) - 景氣嚴冬"; strategy = "重壓無風險長天期公債與美元避險，股市僅限小額定期定額，切勿輕易 All-in 猜底。"; }
   } else if (scores.boom_warning >= 4 || (t10y2y && t10y2y.latest < 0 && scores.boom_warning >= 2)) {
-    verdict = "🔥 榮景期 (末端) - 衰退轉折危機"
+    baseVerdict = "🔥 榮景期 (末端) - 衰退轉折危機"
     strategy = "午夜12點即將到來！迅速將持股降至 30%~50%，重壓長天期公債準備迎接衰退，全面避開高收益債與原物料。"
   } else if (scores.growth >= 3) {
-    verdict = "📈 穩定成長期"; strategy = "維持高持股部位，享受時間複利。避開面臨跌價風險的無風險公債，保守者可持有高收益債。"
+    baseVerdict = "📈 穩定成長期"; strategy = "維持高持股部位，享受時間複利。避開面臨跌價風險的無風險公債，保守者可持有高收益債。"
   } else if (scores.recovery >= 3) {
-    verdict = "🌱 景氣復甦期"; strategy = "股市被低估，勇敢錢進風險資產，適度放大槓桿！無風險債券準備獲利了結轉出。"
+    baseVerdict = "🌱 景氣復甦期"; strategy = "股市被低估，勇敢錢進風險資產，適度放大槓桿！無風險債券準備獲利了結轉出。"
   } else if (scores.boom_warning >= 1) {
-    verdict = "🥂 榮景期 (高檔熱絡)"; strategy = "享受最後的末升段，維持 70% 持股，但不可失去戒心，隨時觀察警訊變化。"
+    baseVerdict = "🥂 榮景期 (高檔熱絡)"; strategy = "享受最後的末升段，維持 70% 持股，但不可失去戒心，隨時觀察警訊變化。"
   } else {
-    verdict = "🌀 週期過渡期 (多空交雜)"; strategy = "目前多空數據交雜，可能正處於階段轉換的過渡期。建議維持股債平衡配置，靜待更明確的信號。"
+    baseVerdict = "🌀 週期過渡期 (多空交雜)"; strategy = "目前多空數據交雜，可能正處於階段轉換的過渡期。建議維持股債平衡配置，靜待更明確的信號。"
   }
 
+  // ================= 4. 🚀 狀態記憶與順序攔截邏輯 =================
+  const supabase = await serverSupabaseClient(event)
+  let finalVerdict = baseVerdict;
+
+  try {
+    // 取得資料庫中最新的一筆歷史紀錄
+    const { data: lastRecord } = await supabase
+      .from('economic_records')
+      .select('verdict')
+      .order('date', { ascending: false })
+      .limit(1)
+      .single()
+
+    if (lastRecord) {
+      // 定義景氣順序權重 (1到4)
+      const cycleOrder: Record<string, number> = {
+        "🌱 景氣復甦期": 1,
+        "📈 穩定成長期": 2,
+        "🥂 榮景期 (高檔熱絡)": 3,
+        "🔥 榮景期 (末端) - 衰退轉折危機": 3,
+        "🥶 衰退期 (主跌段) - 景氣嚴冬": 4,
+        "🥶 衰退期 (末端) - 底部反轉曙光已現": 4,
+        "🌀 週期過渡期 (多空交雜)": 0,
+        "🌀 週期過渡期 (Transition)": 0
+      }
+
+      const prevVerdict = lastRecord.verdict || "🌀 週期過渡期 (多空交雜)"
+      const prevWeight = cycleOrder[prevVerdict] || 0
+      const currentWeight = cycleOrder[baseVerdict] || 0
+
+      // 檢查是否不符合線性邏輯 (例如：倒退走，或者跳級)
+      // 允許的特例：4(衰退) -> 1(復甦) 是正常循環
+      const isBackwards = currentWeight < prevWeight && !(prevWeight === 4 && currentWeight === 1)
+      const isSkipping = Math.abs(currentWeight - prevWeight) > 1 && prevWeight !== 0 && currentWeight !== 0 && !(prevWeight === 4 && currentWeight === 1)
+
+      if ((isBackwards || isSkipping) && currentWeight !== 0) {
+        finalVerdict = "🌀 週期過渡期 (Transition)"
+        strategy = `⚠️ 系統偵測到指標跳躍雜訊。原始計算落於【${baseVerdict}】，但與前次狀態【${prevVerdict}】順序不符。建議維持現有部位，靜待下個月數據確認實際趨勢方向。`
+      }
+    }
+  } catch (err) {
+    console.log("無法取得前次紀錄進行比對，忽略過渡期檢查", err)
+  }
+
+  // 準備原始數據供前端顯示
   const raw_data = {
     "FEDFUNDS (聯邦基準利率)": fed ? `${fed.latest}%` : "N/A", "ICSA (初領失業金反彈)": icsa_peak ? `${icsa_peak.pct_from_min}%` : "N/A",
     "PAYEMS (非農就業 YoY)": payems ? `${payems.yoy}%` : "N/A", "RSAFS (零售銷售 YoY)": retail_ann ? `${retail_ann.yoy}%` : "N/A",
@@ -151,11 +197,10 @@ export default defineEventHandler(async (event) => {
     "DRBLACBS (企業違約 YoY)": dr_bus ? `${dr_bus.yoy}%` : "N/A",
   }
 
-  // ================= 4. 存入 Supabase (自動更新) =================
-  const today = now.toLocaleDateString('en-CA') // YYYY-MM-DD
-  const record = { date: today, verdict, strategy, scores, details, raw_data }
+  // ================= 5. 存入 Supabase (自動更新) =================
+  const today = now.toLocaleDateString('en-CA') // YYYY-MM-DD格式
+  const record = { date: today, verdict: finalVerdict, strategy, scores, details, raw_data }
 
-  const supabase = await serverSupabaseClient(event)
   const { error } = await supabase.from('economic_records').upsert(record, { onConflict: 'date' })
 
   return { success: true, db_error: error ? error.message : null, data: record }
