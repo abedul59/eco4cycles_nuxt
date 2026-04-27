@@ -22,6 +22,7 @@ export default defineEventHandler(async (event) => {
   }
 
   function getNearestObs(data: any[], targetDate: Date) {
+    if (data.length === 0) return { date: targetDate, value: 0 };
     return data.reduce((closest, current) => {
       const currentDiff = Math.abs(current.date.getTime() - targetDate.getTime())
       const closestDiff = Math.abs(closest.date.getTime() - targetDate.getTime())
@@ -86,12 +87,12 @@ export default defineEventHandler(async (event) => {
     return { latest: Number(curr.toFixed(2)), saar_now: Number(saar_now.toFixed(2)), saar_prev: Number(saar_prev.toFixed(2)), rebounding: saar_now > saar_prev }
   }
 
-  // ================= 2. 平行發送 20 個 API 請求 (極速) =================
+  // ================= 2. 平行發送 20 個 API 請求 =================
   const [fed, icsa_peak, payems, retail_yoy, retail_ann, pce_ann, pcec96_ann, sentiment, dgorder_yoy, dgorder_ann, pnfi, prfi, gpdic1_ann, gpdic1_saar, pmi, cpi, t10y2y, govt, isratio, dr_con, dr_bus] = await Promise.all([
     fetchTrendData('FEDFUNDS'), fetchPeakReversal('ICSA', 2), fetchAnnualGrowth('PAYEMS'), fetchYoyData('RSAFS'), fetchAnnualGrowth('RSAFS'), fetchAnnualGrowth('PCE'), fetchAnnualGrowth('PCEC96'), fetchPeakReversal('UMCSENT', 1), fetchYoyData('DGORDER'), fetchAnnualGrowth('DGORDER'), fetchAnnualGrowth('PNFI'), fetchAnnualGrowth('PRFI'), fetchAnnualGrowth('GPDIC1'), fetchSaarData('GPDIC1'), fetchTrendData('NAPM', 180), fetchAnnualGrowth('CPIAUCSL'), fetchTrendData('T10Y2Y'), fetchAnnualGrowth('SLEXND'), fetchPeakReversal('ISRATIO', 1), fetchAnnualGrowth('DRCLACBS'), fetchAnnualGrowth('DRBLACBS')
   ])
 
-  // ================= 3. 邏輯判斷與字串生成 =================
+  // ================= 3. 邏輯判斷 =================
   const scores = { recovery: 0, growth: 0, boom_warning: 0, recession: 0, bottom: 0 }
   const details: Record<string, string[]> = { recovery: [], growth: [], boom_warning: [], recession: [], bottom: [] }
 
@@ -115,13 +116,12 @@ export default defineEventHandler(async (event) => {
   if (dr_con && dr_bus && dr_con.yoy > 10.0 && dr_bus.yoy > 10.0) { scores.boom_warning++; details.boom_warning.push(`違約率雙破表：皆大於10%`); }
 
   if (pcec96_ann && pcec96_ann.yoy < 1.0) { scores.recession++; details.recession.push(`消費陡降：實質個人消費 YoY ${pcec96_ann.yoy}% < 1.0%`); }
-  if (gpdic1_ann && gpdic1_ann.yoy < 0) { scores.recession++; details.recession.push(`民間投資陷入衰退：實質民間投資 YoY ${gpdic1_ann.yoy}% < 0`); }
+  if (gpdic1_ann && gpdic1_ann.yoy < 0) { scores.recession++; details.recession.push(`民間投資陷入衰層：實質民間投資 YoY ${gpdic1_ann.yoy}% < 0`); }
 
   if (gpdic1_saar && gpdic1_saar.rebounding) { scores.bottom++; details.bottom.push(`投資動能轉強：季增年率 ${gpdic1_saar.saar_now}% > 上季`); }
   if (retail_yoy && retail_yoy.trend_rebound) { scores.bottom++; details.bottom.push(`零售提早反彈：最新YoY ${retail_yoy.yoy_now}% > 3個月前`); }
   if (pmi && pmi.latest > 42.0 && !pmi.trend_down) { scores.bottom++; details.bottom.push(`PMI 觸底回升：最新 ${pmi.latest}`); }
 
-  // 階層式決策樹 (基礎判定)
   let baseVerdict = "", strategy = ""
   if (scores.recession >= 1) {
     if (scores.bottom >= 2) { baseVerdict = "🥶 衰退期 (末端) - 底部反轉曙光已現"; strategy = "絕佳入市時機！執行 U 型扣款分批大買股票，持有長債享受降息紅利，高收益債亦可搶跌深反彈。"; } 
@@ -139,12 +139,11 @@ export default defineEventHandler(async (event) => {
     baseVerdict = "🌀 週期過渡期 (多空交雜)"; strategy = "目前多空數據交雜，可能正處於階段轉換的過渡期。建議維持股債平衡配置，靜待更明確的信號。"
   }
 
-  // ================= 4. 🚀 狀態記憶與順序攔截邏輯 =================
+  // ================= 4. 🚀 狀態記憶與「嚴格順序」攔截邏輯 =================
   const supabase = await serverSupabaseClient(event)
   let finalVerdict = baseVerdict;
 
   try {
-    // 取得資料庫中最新的一筆歷史紀錄
     const { data: lastRecord } = await supabase
       .from('economic_records')
       .select('verdict')
@@ -153,7 +152,6 @@ export default defineEventHandler(async (event) => {
       .single()
 
     if (lastRecord) {
-      // 定義景氣順序權重 (1到4)
       const cycleOrder: Record<string, number> = {
         "🌱 景氣復甦期": 1,
         "📈 穩定成長期": 2,
@@ -161,29 +159,36 @@ export default defineEventHandler(async (event) => {
         "🔥 榮景期 (末端) - 衰退轉折危機": 3,
         "🥶 衰退期 (主跌段) - 景氣嚴冬": 4,
         "🥶 衰退期 (末端) - 底部反轉曙光已現": 4,
-        "🌀 週期過渡期 (多空交雜)": 0,
-        "🌀 週期過渡期 (Transition)": 0
+        "🌀 週期過渡期 (Transition)": 0,
+        "🌀 週期過渡期 (多空交雜)": 0
       }
 
       const prevVerdict = lastRecord.verdict || "🌀 週期過渡期 (多空交雜)"
       const prevWeight = cycleOrder[prevVerdict] || 0
       const currentWeight = cycleOrder[baseVerdict] || 0
 
-      // 檢查是否不符合線性邏輯 (例如：倒退走，或者跳級)
-      // 允許的特例：4(衰退) -> 1(復甦) 是正常循環
-      const isBackwards = currentWeight < prevWeight && !(prevWeight === 4 && currentWeight === 1)
-      const isSkipping = Math.abs(currentWeight - prevWeight) > 1 && prevWeight !== 0 && currentWeight !== 0 && !(prevWeight === 4 && currentWeight === 1)
-
-      if ((isBackwards || isSkipping) && currentWeight !== 0) {
-        finalVerdict = "🌀 週期過渡期 (Transition)"
-        strategy = `⚠️ 系統偵測到指標跳躍雜訊。原始計算落於【${baseVerdict}】，但與前次狀態【${prevVerdict}】順序不符。建議維持現有部位，靜待下個月數據確認實際趨勢方向。`
+      if (prevWeight !== 0 && currentWeight !== 0) {
+        // 🚨 榮景期後的嚴格過濾：防止倒退回復甦/成長
+        if (prevWeight === 3 && (currentWeight === 1 || currentWeight === 2)) {
+          finalVerdict = "🌀 週期過渡期 (Transition)"
+          strategy = `⚠️ 【指標衝突警報】前次判定為【${prevVerdict}】，最新計分雖降至【${baseVerdict}】，但景氣理論中「榮景不應倒退」回復甦或成長。判定目前為過渡期雜訊，建議維持原策略，觀察是否正式轉向衰退。`
+        } 
+        // 🚨 景氣逆行攔截
+        else if (currentWeight < prevWeight && !(prevWeight === 4 && currentWeight === 1)) {
+          finalVerdict = "🌀 週期過渡期 (Transition)"
+          strategy = `⚠️ 【順序逆行警報】系統計分落於【${baseVerdict}】，但前次為【${prevVerdict}】。判定為短期雜訊造成的過渡期狀態。`
+        }
+        // 🚨 跳級攔截 (排除落底復甦)
+        else if (currentWeight - prevWeight > 1 && !(prevWeight === 4 && currentWeight === 1)) {
+          finalVerdict = "🌀 週期過渡期 (Transition)"
+          strategy = `⚠️ 【過度跳躍警報】指標從【${prevVerdict}】跳級至【${baseVerdict}】。缺乏傳導過程，判定為過渡期。`
+        }
       }
     }
   } catch (err) {
-    console.log("無法取得前次紀錄進行比對，忽略過渡期檢查", err)
+    console.log("無法取得前次紀錄進行比對")
   }
 
-  // 準備原始數據供前端顯示
   const raw_data = {
     "FEDFUNDS (聯邦基準利率)": fed ? `${fed.latest}%` : "N/A", "ICSA (初領失業金反彈)": icsa_peak ? `${icsa_peak.pct_from_min}%` : "N/A",
     "PAYEMS (非農就業 YoY)": payems ? `${payems.yoy}%` : "N/A", "RSAFS (零售銷售 YoY)": retail_ann ? `${retail_ann.yoy}%` : "N/A",
@@ -197,10 +202,8 @@ export default defineEventHandler(async (event) => {
     "DRBLACBS (企業違約 YoY)": dr_bus ? `${dr_bus.yoy}%` : "N/A",
   }
 
-  // ================= 5. 存入 Supabase (自動更新) =================
-  const today = now.toLocaleDateString('en-CA') // YYYY-MM-DD格式
+  const today = now.toLocaleDateString('en-CA')
   const record = { date: today, verdict: finalVerdict, strategy, scores, details, raw_data }
-
   const { error } = await supabase.from('economic_records').upsert(record, { onConflict: 'date' })
 
   return { success: true, db_error: error ? error.message : null, data: record }
