@@ -92,7 +92,7 @@ export default defineEventHandler(async (event) => {
     fetchTrendData('FEDFUNDS'), fetchPeakReversal('ICSA', 2), fetchAnnualGrowth('PAYEMS'), fetchYoyData('RSAFS'), fetchAnnualGrowth('RSAFS'), fetchAnnualGrowth('PCE'), fetchAnnualGrowth('PCEC96'), fetchPeakReversal('UMCSENT', 1), fetchYoyData('DGORDER'), fetchAnnualGrowth('DGORDER'), fetchAnnualGrowth('PNFI'), fetchAnnualGrowth('PRFI'), fetchAnnualGrowth('GPDIC1'), fetchSaarData('GPDIC1'), fetchTrendData('NAPM', 180), fetchAnnualGrowth('CPIAUCSL'), fetchTrendData('T10Y2Y'), fetchAnnualGrowth('SLEXND'), fetchPeakReversal('ISRATIO', 1), fetchAnnualGrowth('DRCLACBS'), fetchAnnualGrowth('DRBLACBS')
   ])
 
-  // ================= 3. 邏輯判斷 =================
+  // ================= 3. 邏輯判斷 (原始數據計分) =================
   const scores = { recovery: 0, growth: 0, boom_warning: 0, recession: 0, bottom: 0 }
   const details: Record<string, string[]> = { recovery: [], growth: [], boom_warning: [], recession: [], bottom: [] }
 
@@ -116,7 +116,7 @@ export default defineEventHandler(async (event) => {
   if (dr_con && dr_bus && dr_con.yoy > 10.0 && dr_bus.yoy > 10.0) { scores.boom_warning++; details.boom_warning.push(`違約率雙破表：皆大於10%`); }
 
   if (pcec96_ann && pcec96_ann.yoy < 1.0) { scores.recession++; details.recession.push(`消費陡降：實質個人消費 YoY ${pcec96_ann.yoy}% < 1.0%`); }
-  if (gpdic1_ann && gpdic1_ann.yoy < 0) { scores.recession++; details.recession.push(`民間投資陷入衰層：實質民間投資 YoY ${gpdic1_ann.yoy}% < 0`); }
+  if (gpdic1_ann && gpdic1_ann.yoy < 0) { scores.recession++; details.recession.push(`民間投資陷入衰退：實質民間投資 YoY ${gpdic1_ann.yoy}% < 0`); }
 
   if (gpdic1_saar && gpdic1_saar.rebounding) { scores.bottom++; details.bottom.push(`投資動能轉強：季增年率 ${gpdic1_saar.saar_now}% > 上季`); }
   if (retail_yoy && retail_yoy.trend_rebound) { scores.bottom++; details.bottom.push(`零售提早反彈：最新YoY ${retail_yoy.yoy_now}% > 3個月前`); }
@@ -139,19 +139,24 @@ export default defineEventHandler(async (event) => {
     baseVerdict = "🌀 週期過渡期 (多空交雜)"; strategy = "目前多空數據交雜，可能正處於階段轉換的過渡期。建議維持股債平衡配置，靜待更明確的信號。"
   }
 
-  // ================= 4. 🚀 狀態記憶與「嚴格順序」攔截邏輯 =================
+  // ================= 4. 🚀 狀態記憶與「60天主流趨勢」嚴格攔截邏輯 =================
   const supabase = await serverSupabaseClient(event)
   let finalVerdict = baseVerdict;
 
   try {
-    const { data: lastRecord } = await supabase
+    // 計算 60 天前的日期，找出這兩個月的軌跡
+    const sixtyDaysAgo = new Date(now);
+    sixtyDaysAgo.setDate(sixtyDaysAgo.getDate() - 60);
+    const sixtyDaysAgoStr = sixtyDaysAgo.toISOString().split('T')[0];
+
+    // 一次撈取過去 60 天的所有紀錄
+    const { data: recentRecords } = await supabase
       .from('economic_records')
       .select('verdict')
-      .order('date', { ascending: false })
-      .limit(1)
-      .single()
+      .gte('date', sixtyDaysAgoStr)
+      .order('date', { ascending: false });
 
-    if (lastRecord) {
+    if (recentRecords && recentRecords.length > 0) {
       const cycleOrder: Record<string, number> = {
         "🌱 景氣復甦期": 1,
         "📈 穩定成長期": 2,
@@ -163,30 +168,46 @@ export default defineEventHandler(async (event) => {
         "🌀 週期過渡期 (多空交雜)": 0
       }
 
-      const prevVerdict = lastRecord.verdict || "🌀 週期過渡期 (多空交雜)"
-      const prevWeight = cycleOrder[prevVerdict] || 0
-      const currentWeight = cycleOrder[baseVerdict] || 0
+      // 🔍 核心邏輯：找出這 60 天最常出現的「主流狀態」(排除過渡期)
+      const counts: Record<string, number> = {};
+      let dominantVerdict = recentRecords[0].verdict; // 若無主流，預設為最新一筆
+      let maxCount = 0;
+
+      for (const record of recentRecords) {
+        const v = record.verdict;
+        if (cycleOrder[v] !== 0) { // 只統計確認的四大階段
+          counts[v] = (counts[v] || 0) + 1;
+          if (counts[v] > maxCount) {
+            maxCount = counts[v];
+            dominantVerdict = v;
+          }
+        }
+      }
+
+      // 將主流狀態與今日計算結果做權重比對
+      const prevWeight = cycleOrder[dominantVerdict] || 0;
+      const currentWeight = cycleOrder[baseVerdict] || 0;
 
       if (prevWeight !== 0 && currentWeight !== 0) {
-        // 🚨 榮景期後的嚴格過濾：防止倒退回復甦/成長
+        // 🚨 規則 1：【榮景期特判】過去兩個月的主流是榮景，就不可能跌回復甦/成長！
         if (prevWeight === 3 && (currentWeight === 1 || currentWeight === 2)) {
-          finalVerdict = "🌀 週期過渡期 (Transition)"
-          strategy = `⚠️ 【指標衝突警報】前次判定為【${prevVerdict}】，最新計分雖降至【${baseVerdict}】，但景氣理論中「榮景不應倒退」回復甦或成長。判定目前為過渡期雜訊，建議維持原策略，觀察是否正式轉向衰退。`
+          finalVerdict = "🌀 週期過渡期 (Transition)";
+          strategy = `⚠️ 【Izzax 理論：雜訊過濾】過去兩個月的景氣主流為【${dominantVerdict}】。依據景氣循環理論，榮景過後必為衰退，不可能倒退回復甦或成長。今日數據 (${baseVerdict}) 判定為短期雜訊干擾。建議維持「榮景期」部位策略，靜待數據確認。`;
         } 
-        // 🚨 景氣逆行攔截
+        // 🚨 規則 2：【一般逆行攔截】(排除 4變1 正常的落底復甦)
         else if (currentWeight < prevWeight && !(prevWeight === 4 && currentWeight === 1)) {
-          finalVerdict = "🌀 週期過渡期 (Transition)"
-          strategy = `⚠️ 【順序逆行警報】系統計分落於【${baseVerdict}】，但前次為【${prevVerdict}】。判定為短期雜訊造成的過渡期狀態。`
+          finalVerdict = "🌀 週期過渡期 (Transition)";
+          strategy = `⚠️ 【順序逆行警報】過去兩個月的主流狀態為【${dominantVerdict}】，景氣無法時空逆行回【${baseVerdict}】。判定為短期數據雜訊，建議維持觀望。`;
         }
-        // 🚨 跳級攔截 (排除落底復甦)
+        // 🚨 規則 3：【過度跳躍攔截】
         else if (currentWeight - prevWeight > 1 && !(prevWeight === 4 && currentWeight === 1)) {
-          finalVerdict = "🌀 週期過渡期 (Transition)"
-          strategy = `⚠️ 【過度跳躍警報】指標從【${prevVerdict}】跳級至【${baseVerdict}】。缺乏傳導過程，判定為過渡期。`
+          finalVerdict = "🌀 週期過渡期 (Transition)";
+          strategy = `⚠️ 【過度跳躍警報】指標從主流的【${dominantVerdict}】直接跳級至【${baseVerdict}】。缺乏中間傳導過程，判定為過渡期。`;
         }
       }
     }
   } catch (err) {
-    console.log("無法取得前次紀錄進行比對")
+    console.log("無法取得歷史紀錄進行主流狀態比對", err)
   }
 
   const raw_data = {
