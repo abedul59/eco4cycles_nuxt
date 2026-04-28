@@ -139,21 +139,22 @@ export default defineEventHandler(async (event) => {
     baseVerdict = "🌀 週期過渡期 (多空交雜)"; strategy = "目前多空數據交雜，可能正處於階段轉換的過渡期。建議維持股債平衡配置，靜待更明確的信號。"
   }
 
-  // ================= 4. 🚀 狀態記憶與「60天主流趨勢」嚴格攔截邏輯 =================
+  // ================= 4. 🚀 狀態記憶與「120天主流趨勢」嚴格攔截邏輯 =================
   const supabase = await serverSupabaseClient(event)
   let finalVerdict = baseVerdict;
 
   try {
-    // 計算 60 天前的日期，找出這兩個月的軌跡
-    const sixtyDaysAgo = new Date(now);
-    sixtyDaysAgo.setDate(sixtyDaysAgo.getDate() - 60);
-    const sixtyDaysAgoStr = sixtyDaysAgo.toISOString().split('T')[0];
+    // 🌟 將趨勢觀察期拉長至 120 天，稀釋過去一個月的「假復甦」污染資料
+    const daysBack = 120;
+    const trendDate = new Date(now);
+    trendDate.setDate(trendDate.getDate() - daysBack);
+    const trendDateStr = trendDate.toISOString().split('T')[0];
 
-    // 一次撈取過去 60 天的所有紀錄
+    // 一次撈取過去 120 天的所有紀錄
     const { data: recentRecords } = await supabase
       .from('economic_records')
       .select('verdict')
-      .gte('date', sixtyDaysAgoStr)
+      .gte('date', trendDateStr)
       .order('date', { ascending: false });
 
     if (recentRecords && recentRecords.length > 0) {
@@ -168,7 +169,7 @@ export default defineEventHandler(async (event) => {
         "🌀 週期過渡期 (多空交雜)": 0
       }
 
-      // 🔍 核心邏輯：找出這 60 天最常出現的「主流狀態」(排除過渡期)
+      // 🔍 核心邏輯：找出這 120 天最常出現的「主流狀態」(排除過渡期)
       const counts: Record<string, number> = {};
       let dominantVerdict = recentRecords[0].verdict; // 若無主流，預設為最新一筆
       let maxCount = 0;
@@ -189,15 +190,15 @@ export default defineEventHandler(async (event) => {
       const currentWeight = cycleOrder[baseVerdict] || 0;
 
       if (prevWeight !== 0 && currentWeight !== 0) {
-        // 🚨 規則 1：【榮景期特判】過去兩個月的主流是榮景，就不可能跌回復甦/成長！
+        // 🚨 規則 1：【榮景期特判】過去四個月的主流是榮景，就不可能跌回復甦/成長！
         if (prevWeight === 3 && (currentWeight === 1 || currentWeight === 2)) {
           finalVerdict = "🌀 週期過渡期 (Transition)";
-          strategy = `⚠️ 【Izzax 理論：雜訊過濾】過去兩個月的景氣主流為【${dominantVerdict}】。依據景氣循環理論，榮景過後必為衰退，不可能倒退回復甦或成長。今日數據 (${baseVerdict}) 判定為短期雜訊干擾。建議維持「榮景期」部位策略，靜待數據確認。`;
+          strategy = `⚠️ 【Izzax 理論：雜訊過濾】過去四個月的景氣主流為【${dominantVerdict}】。依據景氣循環理論，榮景過後必為衰退，不可能倒退回復甦或成長。今日數據 (${baseVerdict}) 判定為短期雜訊干擾。建議維持「榮景期」部位策略，靜待數據確認。`;
         } 
         // 🚨 規則 2：【一般逆行攔截】(排除 4變1 正常的落底復甦)
         else if (currentWeight < prevWeight && !(prevWeight === 4 && currentWeight === 1)) {
           finalVerdict = "🌀 週期過渡期 (Transition)";
-          strategy = `⚠️ 【順序逆行警報】過去兩個月的主流狀態為【${dominantVerdict}】，景氣無法時空逆行回【${baseVerdict}】。判定為短期數據雜訊，建議維持觀望。`;
+          strategy = `⚠️ 【順序逆行警報】過去四個月的主流狀態為【${dominantVerdict}】，景氣無法時空逆行回【${baseVerdict}】。判定為短期數據雜訊，建議維持觀望。`;
         }
         // 🚨 規則 3：【過度跳躍攔截】
         else if (currentWeight - prevWeight > 1 && !(prevWeight === 4 && currentWeight === 1)) {
