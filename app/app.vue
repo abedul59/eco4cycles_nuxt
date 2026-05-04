@@ -1,6 +1,7 @@
 <template>
   <div class="container py-3">
     
+    <!-- 頂部：歷史日期選單 -->
     <div class="card shadow-sm border-0 mb-4 bg-light">
       <div class="card-body py-2 px-3 d-flex align-items-center justify-content-between flex-wrap gap-2">
         <div class="fw-bold text-secondary">📅 檢視歷史判定紀錄：</div>
@@ -13,18 +14,22 @@
       </div>
     </div>
 
+    <!-- 載入中動畫 -->
     <div v-if="isLoading" class="text-center py-5 my-5">
       <div class="spinner-border text-primary" style="width: 3rem; height: 3rem;" role="status"></div>
       <h5 class="mt-4 text-muted fw-bold">🚀 系統處理中...</h5>
     </div>
 
+    <!-- 錯誤狀態 -->
     <div v-else-if="errorMessage || !currentData" class="alert alert-danger shadow-sm mt-4">
       發生錯誤: {{ errorMessage || '無法取得資料' }}
     </div>
 
+    <!-- 成功載入畫面 -->
     <div v-else>
       <div v-if="dbWarning" class="alert alert-warning shadow-sm small mb-3">⚠️ {{ dbWarning }}</div>
 
+      <!-- 頁籤導覽 -->
       <ul class="nav nav-pills mb-3" id="pills-tab">
         <li class="nav-item"><button class="nav-link" :class="{ 'active fw-bold': activeTab === 'overview', 'text-secondary': activeTab !== 'overview' }" @click="activeTab = 'overview'">👑 終極統整</button></li>
         <li class="nav-item"><button class="nav-link" :class="{ 'bg-success text-white fw-bold': activeTab === 'recovery', 'text-success': activeTab !== 'recovery' }" @click="activeTab = 'recovery'">🌱 復甦</button></li>
@@ -33,7 +38,9 @@
         <li class="nav-item"><button class="nav-link" :class="{ 'bg-primary text-white fw-bold': activeTab === 'recession', 'text-primary': activeTab !== 'recession' }" @click="activeTab = 'recession'">🥶 衰退</button></li>
       </ul>
 
+      <!-- 頁籤內容區 -->
       <div class="tab-content">
+        <!-- ==================== [Tab 1] 👑 終極統整 ==================== -->
         <div v-show="activeTab === 'overview'">
           <div class="card verdict-card shadow-sm mb-3">
             <div class="card-body text-center py-4">
@@ -50,6 +57,7 @@
 
           <h6 class="mb-2 fw-bold px-1 mt-4">📊 全時期 20 大指標最新數據 <span class="small text-primary">(點擊卡片查看圖表)</span></h6>
           <div class="row g-2 mb-4">
+            <!-- 讓卡片變成可點擊，並觸發 openChart -->
             <div class="col-6" v-for="(val, key) in currentData.raw_data" :key="key">
               <div class="card data-card shadow-sm h-100 border clickable-card" @click="openChart(key)">
                 <div class="card-body p-2 text-center">
@@ -61,6 +69,7 @@
           </div>
         </div>
 
+        <!-- ==================== [Tab 2] 🌱 復甦期 ==================== -->
         <div v-show="activeTab === 'recovery'">
           <div class="card border-success mb-3 shadow-sm">
             <div class="card-header bg-success text-white fw-bold">
@@ -88,6 +97,7 @@
           </div>
         </div>
 
+        <!-- ==================== [Tab 3] 📈 成長期 ==================== -->
         <div v-show="activeTab === 'growth'">
           <div class="card border-info mb-3 shadow-sm">
             <div class="card-header bg-info text-white fw-bold">
@@ -115,6 +125,7 @@
           </div>
         </div>
 
+        <!-- ==================== [Tab 4] 🔥 榮景期 ==================== -->
         <div v-show="activeTab === 'boom'">
           <div class="card border-danger mb-3 shadow-sm">
             <div class="card-header bg-danger text-white fw-bold">
@@ -143,6 +154,7 @@
           </div>
         </div>
 
+        <!-- ==================== [Tab 5] 🥶 衰退期 ==================== -->
         <div v-show="activeTab === 'recession'">
           <div class="card border-primary mb-3 shadow-sm">
             <div class="card-header bg-primary text-white fw-bold">
@@ -177,14 +189,16 @@
 
       </div>
 
+      <!-- 底部操作按鈕 -->
       <div class="d-grid gap-2 mt-4 mb-5">
         <button @click="forceSyncNewData" class="btn btn-dark btn-lg shadow-sm" :disabled="isLoading">
-          🔄 強制重新抓取今日最新 FRED 數據
+          🔄 強制重新抓取今日最新數據
         </button>
       </div>
 
     </div>
 
+    <!-- Bootstrap 圖表彈出視窗 (Modal) -->
     <div class="modal fade" id="chartModal" tabindex="-1" aria-hidden="true">
       <div class="modal-dialog modal-dialog-centered modal-lg">
         <div class="modal-content">
@@ -198,6 +212,7 @@
               <p class="mt-2 text-muted small">抓取 FRED 歷史圖表資料中...</p>
             </div>
             <div v-else-if="chartError" class="alert alert-danger">{{ chartError }}</div>
+            <!-- ClientOnly 確保 Chart.js 只在瀏覽器端渲染 -->
             <ClientOnly v-else>
               <Line :data="chartData" :options="chartOptions" style="max-height: 300px;" />
             </ClientOnly>
@@ -236,8 +251,8 @@ const chartData = ref({ labels: [], datasets: [] })
 const chartOptions = ref({
   responsive: true,
   maintainAspectRatio: false,
-  plugins: { legend: { display: false } }, // 隱藏多餘的圖例
-  scales: { x: { ticks: { maxTicksLimit: 6 } } } // 讓X軸日期不要太擠
+  plugins: { legend: { display: false } }, 
+  scales: { x: { ticks: { maxTicksLimit: 6 } } } 
 })
 
 // === 原有的資料存取邏輯 ===
@@ -289,6 +304,12 @@ const forceSyncNewData = async () => {
 let bsModal = null
 
 const openChart = async (keyName) => {
+  // 🌟 [新增防呆]：攔截 ISM PMI 的圖表請求，因為它現在是從 Investing 即時抓的
+  if (keyName.includes('ISM PMI')) {
+    alert('ISM PMI 數據已改為從 Investing.com 即時抓取最新值，此指標暫不提供歷史折線圖。')
+    return
+  }
+
   activeChartTitle.value = keyName
   isChartLoading.value = true
   chartError.value = ''
@@ -305,7 +326,6 @@ const openChart = async (keyName) => {
   try {
     const { data: chartRes } = await useFetch(`/api/chart?seriesId=${seriesId}`)
     if (chartRes.value?.success) {
-      // 填入 Chart.js 需要的資料格式
       chartData.value = {
         labels: chartRes.value.labels,
         datasets: [{
@@ -314,9 +334,9 @@ const openChart = async (keyName) => {
           borderColor: '#0d6efd',
           backgroundColor: 'rgba(13, 110, 253, 0.1)',
           borderWidth: 2,
-          pointRadius: 0, // 隱藏點點，讓曲線更漂亮
+          pointRadius: 0, 
           fill: true,
-          tension: 0.1 // 讓線條微彎平滑
+          tension: 0.1 
         }]
       }
     } else {
