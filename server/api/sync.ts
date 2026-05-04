@@ -1,6 +1,7 @@
 // server/api/sync.ts
 import { defineEventHandler } from 'h3'
 import { serverSupabaseClient } from '#supabase/server'
+import * as cheerio from 'cheerio' // 載入 cheerio 解析 HTML
 
 export default defineEventHandler(async (event) => {
   const apiKey = process.env.FRED_API_KEY
@@ -87,9 +88,56 @@ export default defineEventHandler(async (event) => {
     return { latest: Number(curr.toFixed(2)), saar_now: Number(saar_now.toFixed(2)), saar_prev: Number(saar_prev.toFixed(2)), rebounding: saar_now > saar_prev }
   }
 
+  // 🌟 新增：針對 Investing.com 的專屬爬蟲邏輯 
+  async function fetchInvestingPMI() {
+    try {
+      const url = 'https://www.investing.com/economic-calendar/ism-manufacturing-pmi-173'
+      const response = await fetch(url, {
+        headers: {
+          "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+          "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+          "Accept-Language": "en-US,en;q=0.5"
+        }
+      })
+      const html = await response.text()
+      const $ = cheerio.load(html)
+      
+      let latestPMI: number | null = null
+      let previousPMI: number | null = null
+
+      $('tr.hover\\:bg-\\[\\#FAFAFB\\]').each((index, element) => {
+        const tds = $(element).find('td')
+        if (tds.length >= 5) {
+          const releaseDate = $(tds[0]).text().trim()
+          const actual = $(tds[2]).text().trim()
+          const previous = $(tds[4]).text().trim()
+          
+          if (releaseDate && /\d{4}/.test(releaseDate) && actual) {
+            if (latestPMI === null) {
+              latestPMI = parseFloat(actual)
+              previousPMI = parseFloat(previous)
+            }
+          }
+        }
+      })
+
+      if (latestPMI !== null && previousPMI !== null) {
+        return { latest: latestPMI, trend_down: latestPMI < previousPMI }
+      }
+      return null
+    } catch (error) {
+      console.error("PMI Fetch Error:", error)
+      return null
+    }
+  }
+
   // ================= 2. 平行發送 20 個 API 請求 =================
   const [fed, icsa_peak, payems, retail_yoy, retail_ann, pce_ann, pcec96_ann, sentiment, dgorder_yoy, dgorder_ann, pnfi, prfi, gpdic1_ann, gpdic1_saar, pmi, cpi, t10y2y, govt, isratio, dr_con, dr_bus] = await Promise.all([
-    fetchTrendData('FEDFUNDS'), fetchPeakReversal('ICSA', 2), fetchAnnualGrowth('PAYEMS'), fetchYoyData('RSAFS'), fetchAnnualGrowth('RSAFS'), fetchAnnualGrowth('PCE'), fetchAnnualGrowth('PCEC96'), fetchPeakReversal('UMCSENT', 1), fetchYoyData('DGORDER'), fetchAnnualGrowth('DGORDER'), fetchAnnualGrowth('PNFI'), fetchAnnualGrowth('PRFI'), fetchAnnualGrowth('GPDIC1'), fetchSaarData('GPDIC1'), fetchTrendData('NAPM', 180), fetchAnnualGrowth('CPIAUCSL'), fetchTrendData('T10Y2Y'), fetchAnnualGrowth('SLEXND'), fetchPeakReversal('ISRATIO', 1), fetchAnnualGrowth('DRCLACBS'), fetchAnnualGrowth('DRBLACBS')
+    fetchTrendData('FEDFUNDS'), fetchPeakReversal('ICSA', 2), fetchAnnualGrowth('PAYEMS'), fetchYoyData('RSAFS'), fetchAnnualGrowth('RSAFS'), fetchAnnualGrowth('PCE'), fetchAnnualGrowth('PCEC96'), fetchPeakReversal('UMCSENT', 1), fetchYoyData('DGORDER'), fetchAnnualGrowth('DGORDER'), fetchAnnualGrowth('PNFI'), fetchAnnualGrowth('PRFI'), fetchAnnualGrowth('GPDIC1'), fetchSaarData('GPDIC1'), 
+    fetchInvestingPMI(), // 👈 改用您的專屬爬蟲抓 PMI 
+    fetchAnnualGrowth('CPIAUCSL'), fetchTrendData('T10Y2Y'), 
+    fetchAnnualGrowth('SLEXPND'), // 👈 SLEXND 修正為 SLEXPND
+    fetchPeakReversal('ISRATIO', 1), fetchAnnualGrowth('DRCLACBS'), fetchAnnualGrowth('DRBLACBS')
   ])
 
   // ================= 3. 邏輯判斷 (原始數據計分) =================
@@ -166,9 +214,6 @@ export default defineEventHandler(async (event) => {
       "🌀 週期過渡期 (多空交雜)": 0
     }
 
-    // 🌟 【關鍵修正：冷啟動先驗注入】
-    // 因為資料庫缺乏 3/7 以前的歷史，我們手動注入 90 票的「榮景期」基底，
-    // 以反映 Izzax 總經理論中，2026年第一季絕對處於榮景的客觀現實。
     const counts: Record<string, number> = {
       "🥂 榮景期 (高檔熱絡)": 90 
     };
@@ -177,7 +222,6 @@ export default defineEventHandler(async (event) => {
     let maxCount = 90;
 
     if (recentRecords && recentRecords.length > 0) {
-      // 疊加資料庫中實際算出來的票數
       for (const record of recentRecords) {
         const v = record.verdict;
         if (cycleOrder[v] !== 0) { 
@@ -190,22 +234,18 @@ export default defineEventHandler(async (event) => {
       }
     }
 
-    // 經過注入基底後，dominantVerdict 必定會正確反映為「榮景期」
     const prevWeight = cycleOrder[dominantVerdict] || 0;
     const currentWeight = cycleOrder[baseVerdict] || 0;
 
     if (prevWeight !== 0 && currentWeight !== 0) {
-      // 🚨 規則 1：【榮景期特判】
       if (prevWeight === 3 && (currentWeight === 1 || currentWeight === 2)) {
         finalVerdict = "🌀 週期過渡期 (Transition)";
         strategy = `⚠️ 【Izzax 理論：冷啟動濾網】過去四個月的景氣大趨勢為【${dominantVerdict}】。依據景氣循環理論，榮景過後必為衰退，不可能時空倒流回復甦或成長。今日數據 (${baseVerdict}) 判定為短期雜訊干擾。建議維持「榮景期」部位策略，靜待數據確認。`;
       } 
-      // 🚨 規則 2：【一般逆行攔截】
       else if (currentWeight < prevWeight && !(prevWeight === 4 && currentWeight === 1)) {
         finalVerdict = "🌀 週期過渡期 (Transition)";
         strategy = `⚠️ 【順序逆行警報】大趨勢狀態為【${dominantVerdict}】，景氣無法時空逆行回【${baseVerdict}】。判定為短期數據雜訊。`;
       }
-      // 🚨 規則 3：【過度跳躍攔截】
       else if (currentWeight - prevWeight > 1 && !(prevWeight === 4 && currentWeight === 1)) {
         finalVerdict = "🌀 週期過渡期 (Transition)";
         strategy = `⚠️ 【過度跳躍警報】指標從主流的【${dominantVerdict}】直接跳級至【${baseVerdict}】。缺乏傳導過程，判定為過渡期。`;
@@ -215,6 +255,7 @@ export default defineEventHandler(async (event) => {
     console.log("無法取得歷史紀錄進行主流狀態比對", err)
   }
 
+  // 🌟 更新：呈現名稱修正
   const raw_data = {
     "FEDFUNDS (聯邦基準利率)": fed ? `${fed.latest}%` : "N/A", "ICSA (初領失業金反彈)": icsa_peak ? `${icsa_peak.pct_from_min}%` : "N/A",
     "PAYEMS (非農就業 YoY)": payems ? `${payems.yoy}%` : "N/A", "RSAFS (零售銷售 YoY)": retail_ann ? `${retail_ann.yoy}%` : "N/A",
@@ -222,8 +263,10 @@ export default defineEventHandler(async (event) => {
     "UMCSENT (信心高點滑落)": sentiment ? `${sentiment.pct_from_max}%` : "N/A", "DGORDER (耐久財 YoY)": dgorder_ann ? `${dgorder_ann.yoy}%` : "N/A",
     "PNFI (民間固定投資 YoY)": pnfi ? `${pnfi.yoy}%` : "N/A", "PRFI (私人住宅 YoY)": prfi ? `${prfi.yoy}%` : "N/A",
     "GPDIC1 (實質民間投資 YoY)": gpdic1_ann ? `${gpdic1_ann.yoy}%` : "N/A", "GPDIC1 Saar (季增年率)": gpdic1_saar ? `${gpdic1_saar.saar_now}%` : "N/A",
-    "NAPM (採購經理人 PMI)": pmi ? `${pmi.latest}` : "N/A", "CPIAUCSL (通膨 YoY)": cpi ? `${cpi.yoy}%` : "N/A",
-    "T10Y2Y (10減2年利差)": t10y2y ? `${t10y2y.latest}%` : "N/A", "SLEXND (地方政府支出 YoY)": govt ? `${govt.yoy}%` : "N/A",
+    "ISM PMI (製造業採購經理人)": pmi ? `${pmi.latest}` : "N/A", // 👈 修正名稱與來源
+    "CPIAUCSL (通膨 YoY)": cpi ? `${cpi.yoy}%` : "N/A",
+    "T10Y2Y (10減2年利差)": t10y2y ? `${t10y2y.latest}%` : "N/A", 
+    "SLEXPND (地方政府支出 YoY)": govt ? `${govt.yoy}%` : "N/A", // 👈 SLEXND 修正為 SLEXPND
     "ISRATIO (庫存銷售比)": isratio ? `${isratio.latest}` : "N/A", "DRCLACBS (消費違約 YoY)": dr_con ? `${dr_con.yoy}%` : "N/A",
     "DRBLACBS (企業違約 YoY)": dr_bus ? `${dr_bus.yoy}%` : "N/A",
   }
