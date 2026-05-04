@@ -88,24 +88,28 @@ export default defineEventHandler(async (event) => {
     return { latest: Number(curr.toFixed(2)), saar_now: Number(saar_now.toFixed(2)), saar_prev: Number(saar_prev.toFixed(2)), rebounding: saar_now > saar_prev }
   }
 
-  // 🌟 針對 Investing.com 的專屬爬蟲邏輯 (含自動降級備援機制)
+  // 🌟 終極穿透版：使用 AllOrigins Proxy 繞過 Cloudflare
   async function fetchInvestingPMI() {
     try {
-      const url = 'https://www.investing.com/economic-calendar/ism-manufacturing-pmi-173'
-      const response = await fetch(url, {
-        headers: {
-          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-          "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-          "Accept-Language": "en-US,en;q=0.5",
-        }
-      })
-      const html = await response.text()
+      const targetUrl = 'https://www.investing.com/economic-calendar/ism-manufacturing-pmi-173'
+      // 透過 allorigins.win API 轉發請求，Vercel IP 被完美隱藏
+      const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(targetUrl)}`
+
+      const response = await fetch(proxyUrl)
+      const proxyData = await response.json()
+
+      // 如果代理也抓不到內容，直接拋出錯誤
+      if (!proxyData || !proxyData.contents) {
+        throw new Error("Proxy response is empty")
+      }
+
+      // 將抓回來的乾淨 HTML 丟給 cheerio 解析
+      const html = proxyData.contents
       const $ = cheerio.load(html)
       
       let latestPMI: number | null = null
       let previousPMI: number | null = null
 
-      // 暴力通殺：不管 CSS Class，掃描所有表格列
       $('table tr').each((index, element) => {
         const tds = $(element).find('td')
         if (tds.length >= 5) {
@@ -126,20 +130,17 @@ export default defineEventHandler(async (event) => {
         return { latest: latestPMI, trend_down: latestPMI < previousPMI }
       } 
       
-      // 🚨 備援機制：如果 Vercel 被阻擋，自動切換回 FRED 備用 API
-      console.log("Investing.com 抓取失敗 (可能被阻擋)，自動切換回 FRED 備用 API (NAPM)...")
-      return await fetchTrendData('NAPM', 180)
-
+      return null
     } catch (error) {
       console.error("PMI Fetch Error:", error)
-      return await fetchTrendData('NAPM', 180) 
+      return null 
     }
   }
 
   // ================= 2. 平行發送 20 個 API 請求 =================
   const [fed, icsa_peak, payems, retail_yoy, retail_ann, pce_ann, pcec96_ann, sentiment, dgorder_yoy, dgorder_ann, pnfi, prfi, gpdic1_ann, gpdic1_saar, pmi, cpi, t10y2y, govt, isratio, dr_con, dr_bus] = await Promise.all([
     fetchTrendData('FEDFUNDS'), fetchPeakReversal('ICSA', 2), fetchAnnualGrowth('PAYEMS'), fetchYoyData('RSAFS'), fetchAnnualGrowth('RSAFS'), fetchAnnualGrowth('PCE'), fetchAnnualGrowth('PCEC96'), fetchPeakReversal('UMCSENT', 1), fetchYoyData('DGORDER'), fetchAnnualGrowth('DGORDER'), fetchAnnualGrowth('PNFI'), fetchAnnualGrowth('PRFI'), fetchAnnualGrowth('GPDIC1'), fetchSaarData('GPDIC1'), 
-    fetchInvestingPMI(), 
+    fetchInvestingPMI(), // 👈 現在具備代理穿透能力
     fetchAnnualGrowth('CPIAUCSL'), fetchTrendData('T10Y2Y'), fetchAnnualGrowth('SLEXPND'), fetchPeakReversal('ISRATIO', 1), fetchAnnualGrowth('DRCLACBS'), fetchAnnualGrowth('DRBLACBS')
   ])
 
@@ -217,7 +218,6 @@ export default defineEventHandler(async (event) => {
       "🌀 週期過渡期 (多空交雜)": 0
     }
 
-    // 🌟 注入先驗知識：確保冷啟動時，第一季被判定為榮景
     const counts: Record<string, number> = {
       "🥂 榮景期 (高檔熱絡)": 90 
     };
@@ -259,6 +259,7 @@ export default defineEventHandler(async (event) => {
     console.log("無法取得歷史紀錄進行主流狀態比對", err)
   }
 
+  // 🌟 若 PMI 還是抓不到，給予明確的除錯提示
   const raw_data = {
     "FEDFUNDS (聯邦基準利率)": fed ? `${fed.latest}%` : "N/A", "ICSA (初領失業金反彈)": icsa_peak ? `${icsa_peak.pct_from_min}%` : "N/A",
     "PAYEMS (非農就業 YoY)": payems ? `${payems.yoy}%` : "N/A", "RSAFS (零售銷售 YoY)": retail_ann ? `${retail_ann.yoy}%` : "N/A",
@@ -266,7 +267,7 @@ export default defineEventHandler(async (event) => {
     "UMCSENT (信心高點滑落)": sentiment ? `${sentiment.pct_from_max}%` : "N/A", "DGORDER (耐久財 YoY)": dgorder_ann ? `${dgorder_ann.yoy}%` : "N/A",
     "PNFI (民間固定投資 YoY)": pnfi ? `${pnfi.yoy}%` : "N/A", "PRFI (私人住宅 YoY)": prfi ? `${prfi.yoy}%` : "N/A",
     "GPDIC1 (實質民間投資 YoY)": gpdic1_ann ? `${gpdic1_ann.yoy}%` : "N/A", "GPDIC1 Saar (季增年率)": gpdic1_saar ? `${gpdic1_saar.saar_now}%` : "N/A",
-    "ISM PMI (製造業採購經理人)": pmi ? `${pmi.latest}` : "N/A", 
+    "ISM PMI (製造業採購經理人)": pmi ? `${pmi.latest}` : "N/A (被反爬蟲阻擋)", 
     "CPIAUCSL (通膨 YoY)": cpi ? `${cpi.yoy}%` : "N/A",
     "T10Y2Y (10減2年利差)": t10y2y ? `${t10y2y.latest}%` : "N/A", 
     "SLEXPND (地方政府支出 YoY)": govt ? `${govt.yoy}%` : "N/A", 
