@@ -57,7 +57,6 @@
 
           <h6 class="mb-2 fw-bold px-1 mt-4">📊 全時期 20 大指標最新數據 <span class="small text-primary">(點擊卡片查看圖表)</span></h6>
           <div class="row g-2 mb-4">
-            <!-- 讓卡片變成可點擊，並觸發 openChart -->
             <div class="col-6" v-for="(val, key) in currentData.raw_data" :key="key">
               <div class="card data-card shadow-sm h-100 border clickable-card" @click="openChart(key)">
                 <div class="card-body p-2 text-center">
@@ -69,131 +68,26 @@
           </div>
         </div>
 
-        <!-- ==================== [Tab 2] 🌱 復甦期 ==================== -->
-        <div v-show="activeTab === 'recovery'">
-          <div class="card border-success mb-3 shadow-sm">
-            <div class="card-header bg-success text-white fw-bold">
-              🌱 復甦期觸發條件 ({{ currentData.scores.recovery }}/4)
-            </div>
-            <ul class="list-group list-group-flush">
-              <li v-for="(detail, i) in currentData.details.recovery" :key="i" class="list-group-item text-success fw-bold" style="font-size:0.9rem;">✔️ {{ detail }}</li>
-              <li v-if="!currentData.details.recovery.length" class="list-group-item text-muted small">目前未觸發任何復甦期條件</li>
-            </ul>
-          </div>
-          <div class="theory-box mb-4">
-            <div class="theory-title">📖 復甦期理論與判斷說明</div>
-            <b>正確解讀 4 大現象，確認最壞情況已過：</b><br>
-            1. 貨幣政策寬鬆走向極致：聯邦基金利率、長期公債利率下滑，減輕負債並刺激投資。<br>
-            2. 財政刺激政策陸續推出：撐起消費與投資信心。<br>
-            3. 油價和原物料價格處於谷底：形同實質減稅，刺激民眾消費需求。<br>
-            4. 經濟數據都已走到極低基期：低基期走完後，數據將顯著反彈。<br><br>
-            <b>判斷復甦期關鍵 4 指標：</b><br>
-            • 就業：「初領失業救濟金人數」由高點反轉下降。<br>
-            • 消費：「零售銷售」與「個人耐久財消費」提早落底反彈。<br>
-            • 投資：「製造業耐久財新訂單」走出低迷，不再惡化。<br>
-            • 進出口：「進口金額年增率」從低基期反轉回溫。<br><br>
-            <b>🎯 投資策略 (風險低、報酬高)：</b><br>
-            此時股市已被相對低估，應勇敢錢進股市，放大曝險！將無風險債券獲利了結，適度轉入高收益債或布局短線原物料。黃金應考慮出清。
-          </div>
-        </div>
-
-        <!-- ==================== [Tab 3] 📈 成長期 ==================== -->
-        <div v-show="activeTab === 'growth'">
-          <div class="card border-info mb-3 shadow-sm">
-            <div class="card-header bg-info text-white fw-bold">
-              📈 成長期觸發條件 ({{ currentData.scores.growth }}/4)
-            </div>
-            <ul class="list-group list-group-flush">
-              <li v-for="(detail, i) in currentData.details.growth" :key="i" class="list-group-item text-info fw-bold" style="font-size:0.9rem;">✔️ {{ detail }}</li>
-              <li v-if="!currentData.details.growth.length" class="list-group-item text-muted small">目前未觸發任何成長期條件</li>
-            </ul>
-          </div>
-          <div class="theory-box mb-4">
-            <div class="theory-title">📖 成長期理論與判斷說明</div>
-            <b>觀察關鍵 4 大現象，確認景氣進入穩定增長期：</b><br>
-            1. 撙節開支結束，遞延消費挹注內需動能成長。<br>
-            2. 就業增長顯著改善，民間消費穩定擴增。<br>
-            3. 民間投資擴張，迎來固定資本投入與房地產熱潮。<br>
-            4. 通膨回升至可持續增長水準 (1.5%~4%)，鞏固消費與投資信心。<br><br>
-            <b>💡 常見迷思：</b><br>
-            害怕景氣驟然轉向。事實上，只要經濟增長的巨輪開始轉動，民間投資和消費動能鞏固後，就不容易因偶發風險因子轉向。<br><br>
-            <b>🎯 投資策略：</b><br>
-            • 股市：看似昂貴其實不貴，企業獲利不斷增長為最大支撐。策略為「持續買進與持有風險資產」。<br>
-            • 高收益債：違約率維持穩定低檔，可持續買進持有。<br>
-            • 無風險債券：升息循環使價格下降，應避免持有，建議轉出。<br>
-            • 原物料：初期價格上揚，後期則會因高油價排擠消費而走跌。
-          </div>
-        </div>
-
-        <!-- ==================== [Tab 4] 🔥 榮景期 ==================== -->
-        <div v-show="activeTab === 'boom'">
-          <div class="card border-danger mb-3 shadow-sm">
-            <div class="card-header bg-danger text-white fw-bold">
-              🔥 榮景轉折警訊條件 ({{ currentData.scores.boom_warning }}/8)
-            </div>
-            <ul class="list-group list-group-flush">
-              <li v-for="(detail, i) in currentData.details.boom_warning" :key="i" class="list-group-item text-danger fw-bold" style="font-size:0.9rem;">🚨 {{ detail }}</li>
-              <li v-if="!currentData.details.boom_warning.length" class="list-group-item text-muted small">未觸發警訊，擴張依舊健康</li>
-            </ul>
-          </div>
-          <div class="theory-box mb-4">
-            <div class="theory-title">📖 榮景期理論與判斷說明</div>
-            景氣擴張最迷人時期，過度熱絡後走向盛極而衰。特徵包含：景氣加速成長、資本市場熱絡、樂觀情緒高昂、風險意識極低。<br><br>
-            <b>解讀 8 大指標，確立榮景期起訖關鍵點：</b><br>
-            1. 殖利率曲線倒掛 (T10Y2Y < 0)：意味瘋狂的末升段即將到來。<br>
-            2. 初領失業金人數：U型結構確立 (自谷底反彈翹起)，可預測衰退期將至。<br>
-            3. 民間消費：零售銷售領先整體個人消費支出 (PCE) 下滑。<br>
-            4. 消費者信心指數：若顯著自高點滑落，則為警訊。<br>
-            5. 民間投資：第 2 次耐久財支出暴衝期預告尾聲，隨後衰退。<br>
-            6. 政府支出：地方政府支出年增率顯著增加後轉向。<br>
-            7. 庫存增減：庫存銷售比攀升，面臨供過於求壓力。<br>
-            8. 債務違約率：消費與企業貸款違約率雙雙顯著攀升 (雙破表)。<br><br>
-            <b>🎯 高階資產配置策略：</b><br>
-            • 股市：面臨高風險，但末升段往往伴隨驚人報酬。依循高階模式逐年調降持股，切忌全空，持股最低水位應保持 30%。<br>
-            • 無風險債券：在榮景期中後期，長債會迎來「再修正」的末跌段，此時正是布局長天期公債的【最佳甜蜜點】。
-          </div>
-        </div>
-
-        <!-- ==================== [Tab 5] 🥶 衰退期 ==================== -->
-        <div v-show="activeTab === 'recession'">
-          <div class="card border-primary mb-3 shadow-sm">
-            <div class="card-header bg-primary text-white fw-bold">
-              🥶 衰退與落底條件 (衰退:{{ currentData.scores.recession }}/2, 曙光:{{ currentData.scores.bottom }}/3)
-            </div>
-            <ul class="list-group list-group-flush">
-              <li class="list-group-item bg-light text-dark fw-bold small">【衰退確認指標】</li>
-              <li v-for="(detail, i) in currentData.details.recession" :key="'rec'+i" class="list-group-item text-primary fw-bold" style="font-size:0.9rem;">🚨 {{ detail }}</li>
-              <li v-if="!currentData.details.recession.length" class="list-group-item text-muted small">未確認陷入衰退</li>
-              
-              <li class="list-group-item bg-light text-dark fw-bold small">【落底曙光指標】</li>
-              <li v-for="(detail, i) in currentData.details.bottom" :key="'bot'+i" class="list-group-item text-success fw-bold" style="font-size:0.9rem;">🌱 {{ detail }}</li>
-              <li v-if="!currentData.details.bottom.length" class="list-group-item text-muted small">無落底反轉跡象</li>
-            </ul>
-          </div>
-          <div class="theory-box mb-4">
-            <div class="theory-title">📖 衰退期理論與判斷說明</div>
-            景氣從榮景期走入衰退期，是景氣循環的必經過程。市場充斥悲觀氛圍、資本市場急凍。<br><br>
-            <b>緊盯 2 數據，確認衰退期是否來臨：</b><br>
-            1. 個人消費支出 (PCE)：出現「2 次消費陡降」(基期走低後仍繼續下修，小於1%)。<br>
-            2. 民間投資年增率 (GPDIC1)：比經濟成長率更早反轉，並出現超過 10% 以上的雙位數深度衰退。<br><br>
-            <b>留意 3 指標低檔反轉，簡易判斷景氣落底 (曙光)：</b><br>
-            1. 民間投資 (季增年率 Saar)：只要季增年率開始好轉，意味短期衰退動能消退，景氣谷底浮現。<br>
-            2. 民間消費 (零售銷售)：月增年率或 YoY 提早反彈，是景氣落底轉強的基石。<br>
-            3. 採購經理人指數 (PMI)：在底部出現反彈跡象，暗示擴張倒數計時。<br><br>
-            <b>🎯 絕佳投資策略：</b><br>
-            • 債市 (避風港)：無風險公債會走出一波長多走勢。<br>
-            • 股市 (入市時機)：分批布局、把氣拉長。採用「U型扣款」定期定額向下買進，降低成本，切勿在低檔殺出！<br>
-            • 美元：避險心態會推升美元升值，為保全資產的必要手段。
-          </div>
-        </div>
-
+        <!-- ==================== [Tab 2~5] 保留原本的詳細說明 ==================== -->
+        <!-- (為節省閱讀空間，此處邏輯與上版完全相同) -->
+        <div v-show="activeTab === 'recovery'"><div class="card border-success mb-3 shadow-sm"><div class="card-header bg-success text-white fw-bold">🌱 復甦期觸發條件 ({{ currentData.scores.recovery }}/4)</div><ul class="list-group list-group-flush"><li v-for="(detail, i) in currentData.details.recovery" :key="i" class="list-group-item text-success fw-bold" style="font-size:0.9rem;">✔️ {{ detail }}</li><li v-if="!currentData.details.recovery.length" class="list-group-item text-muted small">目前未觸發任何復甦期條件</li></ul></div><div class="theory-box mb-4"><div class="theory-title">📖 復甦期理論與判斷說明</div><b>正確解讀 4 大現象，確認最壞情況已過：</b><br>1. 貨幣政策寬鬆走向極致：聯邦基金利率、長期公債利率下滑，減輕負債並刺激投資。<br>2. 財政刺激政策陸續推出：撐起消費與投資信心。<br>3. 油價和原物料價格處於谷底：形同實質減稅，刺激民眾消費需求。<br>4. 經濟數據都已走到極低基期：低基期走完後，數據將顯著反彈。<br><br><b>判斷復甦期關鍵 4 指標：</b><br>• 就業：「初領失業救濟金人數」由高點反轉下降。<br>• 消費：「零售銷售」與「個人耐久財消費」提早落底反彈。<br>• 投資：「製造業耐久財新訂單」走出低迷，不再惡化。<br>• 進出口：「進口金額年增率」從低基期反轉回溫。<br><br><b>🎯 投資策略 (風險低、報酬高)：</b><br>此時股市已被相對低估，應勇敢錢進股市，放大曝險！將無風險債券獲利了結，適度轉入高收益債或布局短線原物料。黃金應考慮出清。</div></div>
+        <div v-show="activeTab === 'growth'"><div class="card border-info mb-3 shadow-sm"><div class="card-header bg-info text-white fw-bold">📈 成長期觸發條件 ({{ currentData.scores.growth }}/4)</div><ul class="list-group list-group-flush"><li v-for="(detail, i) in currentData.details.growth" :key="i" class="list-group-item text-info fw-bold" style="font-size:0.9rem;">✔️ {{ detail }}</li><li v-if="!currentData.details.growth.length" class="list-group-item text-muted small">目前未觸發任何成長期條件</li></ul></div><div class="theory-box mb-4"><div class="theory-title">📖 成長期理論與判斷說明</div><b>觀察關鍵 4 大現象，確認景氣進入穩定增長期：</b><br>1. 撙節開支結束，遞延消費挹注內需動能成長。<br>2. 就業增長顯著改善，民間消費穩定擴增。<br>3. 民間投資擴張，迎來固定資本投入與房地產熱潮。<br>4. 通膨回升至可持續增長水準 (1.5%~4%)，鞏固消費與投資信心。<br><br><b>💡 常見迷思：</b><br>害怕景氣驟然轉向。事實上，只要經濟增長的巨輪開始轉動，民間投資和消費動能鞏固後，就不容易因偶發風險因子轉向。<br><br><b>🎯 投資策略：</b><br>• 股市：看似昂貴其實不貴，企業獲利不斷增長為最大支撐。策略為「持續買進與持有風險資產」。<br>• 高收益債：違約率維持穩定低檔，可持續買進持有。<br>• 無風險債券：升息循環使價格下降，應避免持有，建議轉出。<br>• 原物料：初期價格上揚，後期則會因高油價排擠消費而走跌。</div></div>
+        <div v-show="activeTab === 'boom'"><div class="card border-danger mb-3 shadow-sm"><div class="card-header bg-danger text-white fw-bold">🔥 榮景轉折警訊條件 ({{ currentData.scores.boom_warning }}/8)</div><ul class="list-group list-group-flush"><li v-for="(detail, i) in currentData.details.boom_warning" :key="i" class="list-group-item text-danger fw-bold" style="font-size:0.9rem;">🚨 {{ detail }}</li><li v-if="!currentData.details.boom_warning.length" class="list-group-item text-muted small">未觸發警訊，擴張依舊健康</li></ul></div><div class="theory-box mb-4"><div class="theory-title">📖 榮景期理論與判斷說明</div>景氣擴張最迷人時期，過度熱絡後走向盛極而衰。特徵包含：景氣加速成長、資本市場熱絡、樂觀情緒高昂、風險意識極低。<br><br><b>解讀 8 大指標，確立榮景期起訖關鍵點：</b><br>1. 殖利率曲線倒掛 (T10Y2Y < 0)：意味瘋狂的末升段即將到來。<br>2. 初領失業金人數：U型結構確立 (自谷底反彈翹起)，可預測衰退期將至。<br>3. 民間消費：零售銷售領先整體個人消費支出 (PCE) 下滑。<br>4. 消費者信心指數：若顯著自高點滑落，則為警訊。<br>5. 民間投資：第 2 次耐久財支出暴衝期預告尾聲，隨後衰退。<br>6. 政府支出：地方政府支出年增率顯著增加後轉向。<br>7. 庫存增減：庫存銷售比攀升，面臨供過於求壓力。<br>8. 債務違約率：消費與企業貸款違約率雙雙顯著攀升 (雙破表)。<br><br><b>🎯 高階資產配置策略：</b><br>• 股市：面臨高風險，但末升段往往伴隨驚人報酬。依循高階模式逐年調降持股，切忌全空，持股最低水位應保持 30%。<br>• 無風險債券：在榮景期中後期，長債會迎來「再修正」的末跌段，此時正是布局長天期公債的【最佳甜蜜點】。</div></div>
+        <div v-show="activeTab === 'recession'"><div class="card border-primary mb-3 shadow-sm"><div class="card-header bg-primary text-white fw-bold">🥶 衰退與落底條件 (衰退:{{ currentData.scores.recession }}/2, 曙光:{{ currentData.scores.bottom }}/3)</div><ul class="list-group list-group-flush"><li class="list-group-item bg-light text-dark fw-bold small">【衰退確認指標】</li><li v-for="(detail, i) in currentData.details.recession" :key="'rec'+i" class="list-group-item text-primary fw-bold" style="font-size:0.9rem;">🚨 {{ detail }}</li><li v-if="!currentData.details.recession.length" class="list-group-item text-muted small">未確認陷入衰退</li><li class="list-group-item bg-light text-dark fw-bold small">【落底曙光指標】</li><li v-for="(detail, i) in currentData.details.bottom" :key="'bot'+i" class="list-group-item text-success fw-bold" style="font-size:0.9rem;">🌱 {{ detail }}</li><li v-if="!currentData.details.bottom.length" class="list-group-item text-muted small">無落底反轉跡象</li></ul></div><div class="theory-box mb-4"><div class="theory-title">📖 衰退期理論與判斷說明</div>景氣從榮景期走入衰退期，是景氣循環的必經過程。市場充斥悲觀氛圍、資本市場急凍。<br><br><b>緊盯 2 數據，確認衰退期是否來臨：</b><br>1. 個人消費支出 (PCE)：出現「2 次消費陡降」(基期走低後仍繼續下修，小於1%)。<br>2. 民間投資年增率 (GPDIC1)：比經濟成長率更早反轉，並出現超過 10% 以上的雙位數深度衰退。<br><br><b>留意 3 指標低檔反轉，簡易判斷景氣落底 (曙光)：</b><br>1. 民間投資 (季增年率 Saar)：只要季增年率開始好轉，意味短期衰退動能消退，景氣谷底浮現。<br>2. 民間消費 (零售銷售)：月增年率或 YoY 提早反彈，是景氣落底轉強的基石。<br>3. 採購經理人指數 (PMI)：在底部出現反彈跡象，暗示擴張倒數計時。<br><br><b>🎯 絕佳投資策略：</b><br>• 債市 (避風港)：無風險公債會走出一波長多走勢。<br>• 股市 (入市時機)：分批布局、把氣拉長。採用「U型扣款」定期定額向下買進，降低成本，切勿在低檔殺出！<br>• 美元：避險心態會推升美元升值，為保全資產的必要手段。</div></div>
       </div>
 
-      <!-- 底部操作按鈕 -->
-      <div class="d-grid gap-2 mt-4 mb-5">
-        <button @click="forceSyncNewData" class="btn btn-dark btn-lg shadow-sm" :disabled="isLoading">
-          🔄 強制重新抓取今日最新數據
-        </button>
+      <!-- 🌟 底部操作區塊：手動輸入 PMI + 重新抓取 -->
+      <div class="card mb-5 shadow-sm border-0 bg-white">
+        <div class="card-body">
+          <label class="form-label fw-bold text-dark">✏️ 手動更新 ISM PMI (製造業採購經理人)</label>
+          <p class="small text-muted mb-2">由於 Investing.com 反爬蟲機制嚴格，請手動輸入最新 PMI 數值。若無更新請留空，系統將自動沿用上次數值並抓取其他 19 項指標。</p>
+          <div class="input-group mb-0">
+            <input type="number" step="0.1" v-model="manualPmiInput" class="form-control" placeholder="例如: 48.5 (若無更新可留空)">
+            <button @click="forceSyncNewData" class="btn btn-dark" :disabled="isLoading">
+              🔄 執行分析與抓取
+            </button>
+          </div>
+        </div>
       </div>
 
     </div>
@@ -243,6 +137,9 @@ const historyDates = ref([])
 const selectedDate = ref('')
 const isHistoryView = ref(false)
 
+// 🌟 手動輸入狀態
+const manualPmiInput = ref('')
+
 // 圖表專用狀態
 const isChartLoading = ref(false)
 const chartError = ref('')
@@ -286,10 +183,16 @@ const loadHistoricalData = async () => {
 const forceSyncNewData = async () => {
   isLoading.value = true; isHistoryView.value = false; errorMessage.value = ''; dbWarning.value = ''; selectedDate.value = ''
   try {
-    const { data: syncRes } = await useFetch('/api/sync')
+    // 🌟 核心修改：將手動輸入的 PMI 數值附帶在網址後面傳給後端
+    const url = manualPmiInput.value ? `/api/sync?pmi=${manualPmiInput.value}` : '/api/sync'
+    
+    const { data: syncRes } = await useFetch(url)
+    
     if (syncRes.value?.success) {
       currentData.value = syncRes.value.data
       activeTab.value = 'overview'
+      manualPmiInput.value = '' // 成功後清空輸入框
+      
       if (syncRes.value.db_error) dbWarning.value = `即時爬蟲已成功，但 Supabase 存檔失敗！原因：${syncRes.value.db_error}`
       else {
         const { data: dateRes } = await useFetch('/api/history-dates')
@@ -304,9 +207,8 @@ const forceSyncNewData = async () => {
 let bsModal = null
 
 const openChart = async (keyName) => {
-  // 🌟 [新增防呆]：攔截 ISM PMI 的圖表請求，因為它現在是從 Investing 即時抓的
   if (keyName.includes('ISM PMI')) {
-    alert('ISM PMI 數據已改為從 Investing.com 即時抓取最新值，此指標暫不提供歷史折線圖。')
+    alert('ISM PMI 數據已改為手動輸入與動態繼承機制，此指標暫不提供歷史折線圖。')
     return
   }
 
@@ -314,13 +216,11 @@ const openChart = async (keyName) => {
   isChartLoading.value = true
   chartError.value = ''
   
-  // 顯示 Modal
   if (!bsModal) {
     bsModal = new window.bootstrap.Modal(document.getElementById('chartModal'))
   }
   bsModal.show()
 
-  // 解析 Series ID (例如從 "FEDFUNDS (聯邦基準利率)" 中取出 "FEDFUNDS")
   const seriesId = keyName.split(' ')[0]
 
   try {
