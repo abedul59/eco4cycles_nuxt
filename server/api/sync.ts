@@ -1,12 +1,47 @@
 // server/api/sync.ts
-import { defineEventHandler } from 'h3'
+import { defineEventHandler, getQuery } from 'h3'
 import { serverSupabaseClient } from '#supabase/server'
-import * as cheerio from 'cheerio'
 
 export default defineEventHandler(async (event) => {
   const apiKey = process.env.FRED_API_KEY
   const now = new Date()
-  
+  const supabase = await serverSupabaseClient(event)
+  const query = getQuery(event)
+  const manualPmiInput = query.pmi ? parseFloat(query.pmi as string) : null
+
+  // 🌟 提前去資料庫撈取「最新一筆歷史紀錄」
+  // 目的 1: 取得昨天的 PMI 來計算趨勢
+  // 目的 2: 如果今天沒輸入 PMI (或排程自動跑)，就沿用昨天的數值
+  const { data: lastRecord } = await supabase
+    .from('economic_records')
+    .select('verdict, raw_data')
+    .order('date', { ascending: false })
+    .limit(1)
+    .single()
+
+  let prevPmiVal = null
+  if (lastRecord?.raw_data?.['ISM PMI (製造業採購經理人)']) {
+    const prevStr = lastRecord.raw_data['ISM PMI (製造業採購經理人)']
+    const match = prevStr.match(/[\d.]+/)
+    if (match) prevPmiVal = parseFloat(match[0])
+  }
+
+  // 🌟 智慧 PMI 處理邏輯
+  let pmi = null
+  if (manualPmiInput !== null && !isNaN(manualPmiInput)) {
+    // 狀況 A：使用者有手動輸入
+    pmi = {
+      latest: manualPmiInput,
+      trend_down: prevPmiVal !== null ? manualPmiInput < prevPmiVal : false
+    }
+  } else if (prevPmiVal !== null) {
+    // 狀況 B：留空，或是 Vercel 半夜自動排程執行 -> 沿用舊值
+    pmi = {
+      latest: prevPmiVal,
+      trend_down: false // 沿用舊值就不算下跌
+    }
+  }
+
   // ================= 1. 底層爬蟲與時間序列演算法 =================
   async function fetchFredData(seriesId: string, daysBack: number) {
     try {
@@ -88,60 +123,9 @@ export default defineEventHandler(async (event) => {
     return { latest: Number(curr.toFixed(2)), saar_now: Number(saar_now.toFixed(2)), saar_prev: Number(saar_prev.toFixed(2)), rebounding: saar_now > saar_prev }
   }
 
-  // 🌟 終極穿透版：使用 AllOrigins Proxy 繞過 Cloudflare
-  async function fetchInvestingPMI() {
-    try {
-      const targetUrl = 'https://www.investing.com/economic-calendar/ism-manufacturing-pmi-173'
-      // 透過 allorigins.win API 轉發請求，Vercel IP 被完美隱藏
-      const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(targetUrl)}`
-
-      const response = await fetch(proxyUrl)
-      const proxyData = await response.json()
-
-      // 如果代理也抓不到內容，直接拋出錯誤
-      if (!proxyData || !proxyData.contents) {
-        throw new Error("Proxy response is empty")
-      }
-
-      // 將抓回來的乾淨 HTML 丟給 cheerio 解析
-      const html = proxyData.contents
-      const $ = cheerio.load(html)
-      
-      let latestPMI: number | null = null
-      let previousPMI: number | null = null
-
-      $('table tr').each((index, element) => {
-        const tds = $(element).find('td')
-        if (tds.length >= 5) {
-          const releaseDate = $(tds[0]).text().trim()
-          const actualText = $(tds[2]).text().trim()
-          const previousText = $(tds[4]).text().trim()
-          
-          if (/\d{4}/.test(releaseDate) && actualText && !isNaN(parseFloat(actualText))) {
-            if (latestPMI === null) {
-              latestPMI = parseFloat(actualText)
-              previousPMI = parseFloat(previousText)
-            }
-          }
-        }
-      })
-
-      if (latestPMI !== null && previousPMI !== null) {
-        return { latest: latestPMI, trend_down: latestPMI < previousPMI }
-      } 
-      
-      return null
-    } catch (error) {
-      console.error("PMI Fetch Error:", error)
-      return null 
-    }
-  }
-
-  // ================= 2. 平行發送 20 個 API 請求 =================
-  const [fed, icsa_peak, payems, retail_yoy, retail_ann, pce_ann, pcec96_ann, sentiment, dgorder_yoy, dgorder_ann, pnfi, prfi, gpdic1_ann, gpdic1_saar, pmi, cpi, t10y2y, govt, isratio, dr_con, dr_bus] = await Promise.all([
-    fetchTrendData('FEDFUNDS'), fetchPeakReversal('ICSA', 2), fetchAnnualGrowth('PAYEMS'), fetchYoyData('RSAFS'), fetchAnnualGrowth('RSAFS'), fetchAnnualGrowth('PCE'), fetchAnnualGrowth('PCEC96'), fetchPeakReversal('UMCSENT', 1), fetchYoyData('DGORDER'), fetchAnnualGrowth('DGORDER'), fetchAnnualGrowth('PNFI'), fetchAnnualGrowth('PRFI'), fetchAnnualGrowth('GPDIC1'), fetchSaarData('GPDIC1'), 
-    fetchInvestingPMI(), // 👈 現在具備代理穿透能力
-    fetchAnnualGrowth('CPIAUCSL'), fetchTrendData('T10Y2Y'), fetchAnnualGrowth('SLEXPND'), fetchPeakReversal('ISRATIO', 1), fetchAnnualGrowth('DRCLACBS'), fetchAnnualGrowth('DRBLACBS')
+  // ================= 2. 平行發送 FRED 19 個 API 請求 =================
+  const [fed, icsa_peak, payems, retail_yoy, retail_ann, pce_ann, pcec96_ann, sentiment, dgorder_yoy, dgorder_ann, pnfi, prfi, gpdic1_ann, gpdic1_saar, cpi, t10y2y, govt, isratio, dr_con, dr_bus] = await Promise.all([
+    fetchTrendData('FEDFUNDS'), fetchPeakReversal('ICSA', 2), fetchAnnualGrowth('PAYEMS'), fetchYoyData('RSAFS'), fetchAnnualGrowth('RSAFS'), fetchAnnualGrowth('PCE'), fetchAnnualGrowth('PCEC96'), fetchPeakReversal('UMCSENT', 1), fetchYoyData('DGORDER'), fetchAnnualGrowth('DGORDER'), fetchAnnualGrowth('PNFI'), fetchAnnualGrowth('PRFI'), fetchAnnualGrowth('GPDIC1'), fetchSaarData('GPDIC1'), fetchAnnualGrowth('CPIAUCSL'), fetchTrendData('T10Y2Y'), fetchAnnualGrowth('SLEXPND'), fetchPeakReversal('ISRATIO', 1), fetchAnnualGrowth('DRCLACBS'), fetchAnnualGrowth('DRBLACBS')
   ])
 
   // ================= 3. 邏輯判斷 (原始數據計分) =================
@@ -172,6 +156,8 @@ export default defineEventHandler(async (event) => {
 
   if (gpdic1_saar && gpdic1_saar.rebounding) { scores.bottom++; details.bottom.push(`投資動能轉強：季增年率 ${gpdic1_saar.saar_now}% > 上季`); }
   if (retail_yoy && retail_yoy.trend_rebound) { scores.bottom++; details.bottom.push(`零售提早反彈：最新YoY ${retail_yoy.yoy_now}% > 3個月前`); }
+  
+  // 加入手動輸入的 PMI 邏輯
   if (pmi && pmi.latest > 42.0 && !pmi.trend_down) { scores.bottom++; details.bottom.push(`PMI 觸底回升：最新 ${pmi.latest}`); }
 
   let baseVerdict = "", strategy = ""
@@ -192,7 +178,6 @@ export default defineEventHandler(async (event) => {
   }
 
   // ================= 4. 🚀 狀態記憶與「基底注入」嚴格攔截邏輯 =================
-  const supabase = await serverSupabaseClient(event)
   let finalVerdict = baseVerdict;
 
   try {
@@ -208,32 +193,20 @@ export default defineEventHandler(async (event) => {
       .order('date', { ascending: false });
 
     const cycleOrder: Record<string, number> = {
-      "🌱 景氣復甦期": 1,
-      "📈 穩定成長期": 2,
-      "🥂 榮景期 (高檔熱絡)": 3,
-      "🔥 榮景期 (末端) - 衰退轉折危機": 3,
-      "🥶 衰退期 (主跌段) - 景氣嚴冬": 4,
-      "🥶 衰退期 (末端) - 底部反轉曙光已現": 4,
-      "🌀 週期過渡期 (Transition)": 0,
-      "🌀 週期過渡期 (多空交雜)": 0
+      "🌱 景氣復甦期": 1, "📈 穩定成長期": 2, "🥂 榮景期 (高檔熱絡)": 3, "🔥 榮景期 (末端) - 衰退轉折危機": 3,
+      "🥶 衰退期 (主跌段) - 景氣嚴冬": 4, "🥶 衰退期 (末端) - 底部反轉曙光已現": 4,
+      "🌀 週期過渡期 (Transition)": 0, "🌀 週期過渡期 (多空交雜)": 0
     }
 
-    const counts: Record<string, number> = {
-      "🥂 榮景期 (高檔熱絡)": 90 
-    };
-    
-    let dominantVerdict = "🥂 榮景期 (高檔熱絡)";
-    let maxCount = 90;
+    const counts: Record<string, number> = { "🥂 榮景期 (高檔熱絡)": 90 };
+    let dominantVerdict = "🥂 榮景期 (高檔熱絡)", maxCount = 90;
 
     if (recentRecords && recentRecords.length > 0) {
       for (const record of recentRecords) {
         const v = record.verdict;
         if (cycleOrder[v] !== 0) { 
           counts[v] = (counts[v] || 0) + 1;
-          if (counts[v] > maxCount) {
-            maxCount = counts[v];
-            dominantVerdict = v;
-          }
+          if (counts[v] > maxCount) { maxCount = counts[v]; dominantVerdict = v; }
         }
       }
     }
@@ -259,7 +232,6 @@ export default defineEventHandler(async (event) => {
     console.log("無法取得歷史紀錄進行主流狀態比對", err)
   }
 
-  // 🌟 若 PMI 還是抓不到，給予明確的除錯提示
   const raw_data = {
     "FEDFUNDS (聯邦基準利率)": fed ? `${fed.latest}%` : "N/A", "ICSA (初領失業金反彈)": icsa_peak ? `${icsa_peak.pct_from_min}%` : "N/A",
     "PAYEMS (非農就業 YoY)": payems ? `${payems.yoy}%` : "N/A", "RSAFS (零售銷售 YoY)": retail_ann ? `${retail_ann.yoy}%` : "N/A",
@@ -267,7 +239,7 @@ export default defineEventHandler(async (event) => {
     "UMCSENT (信心高點滑落)": sentiment ? `${sentiment.pct_from_max}%` : "N/A", "DGORDER (耐久財 YoY)": dgorder_ann ? `${dgorder_ann.yoy}%` : "N/A",
     "PNFI (民間固定投資 YoY)": pnfi ? `${pnfi.yoy}%` : "N/A", "PRFI (私人住宅 YoY)": prfi ? `${prfi.yoy}%` : "N/A",
     "GPDIC1 (實質民間投資 YoY)": gpdic1_ann ? `${gpdic1_ann.yoy}%` : "N/A", "GPDIC1 Saar (季增年率)": gpdic1_saar ? `${gpdic1_saar.saar_now}%` : "N/A",
-    "ISM PMI (製造業採購經理人)": pmi ? `${pmi.latest}` : "N/A (被反爬蟲阻擋)", 
+    "ISM PMI (製造業採購經理人)": pmi ? `${pmi.latest}` : "尚未輸入 (請手動更新)", // 👈 顯示手動輸入或沿用的結果
     "CPIAUCSL (通膨 YoY)": cpi ? `${cpi.yoy}%` : "N/A",
     "T10Y2Y (10減2年利差)": t10y2y ? `${t10y2y.latest}%` : "N/A", 
     "SLEXPND (地方政府支出 YoY)": govt ? `${govt.yoy}%` : "N/A", 
