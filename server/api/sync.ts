@@ -70,7 +70,8 @@ export default defineEventHandler(async (event) => {
     const targetDate = new Date(latest.date); targetDate.setDate(targetDate.getDate() - 90);
     const obs3m = getNearestObs(data, targetDate);
     const change = ((latest.value - obs3m.value) / obs3m.value) * 100;
-    return { latest: Number(latest.value.toFixed(2)), change_3m: Number(change.toFixed(2)), trend_down: change < 0 };
+    // 🌟 修改：新增回傳 3 個月前的數值 (prev)
+    return { latest: Number(latest.value.toFixed(2)), prev: Number(obs3m.value.toFixed(2)), change_3m: Number(change.toFixed(2)), trend_down: change < 0 };
   }
 
   async function fetchYoyData(seriesId: string) {
@@ -115,13 +116,13 @@ export default defineEventHandler(async (event) => {
     fetchTrendData('FEDFUNDS'), fetchPeakReversal('ICSA', 2), fetchAnnualGrowth('PAYEMS'), fetchYoyData('RSAFS'), fetchAnnualGrowth('RSAFS'), fetchAnnualGrowth('PCE'), fetchAnnualGrowth('PCEC96'), fetchPeakReversal('UMCSENT', 1), fetchYoyData('DGORDER'), fetchAnnualGrowth('DGORDER'), fetchAnnualGrowth('PNFI'), fetchAnnualGrowth('PRFI'), fetchAnnualGrowth('GPDIC1'), fetchSaarData('GPDIC1'), fetchAnnualGrowth('CPIAUCSL'), fetchTrendData('T10Y2Y'), fetchAnnualGrowth('SLEXPND'), fetchPeakReversal('ISRATIO', 1), fetchAnnualGrowth('DRCLACBS'), fetchAnnualGrowth('DRBLACBS')
   ]);
 
-  // ================= 3. 🌟 全透視診斷陣列 (不管有無達成全紀錄) =================
+  // ================= 3. 🌟 全透視診斷陣列 (包含「前值」顯示) =================
   const details = {
     recovery: [
-      { desc: "貨幣政策寬鬆 (利率趨降或 < 2.5%)", val: fed ? `${fed.latest}%` : "N/A", met: !!(fed && (fed.trend_down || fed.latest < 2.5)) },
-      { desc: "就業落底反轉 (初領失業金距低點 < 5%)", val: icsa_peak ? `距低點 ${icsa_peak.pct_from_min}%` : "N/A", met: !!(icsa_peak && icsa_peak.pct_from_min < 5.0) },
-      { desc: "零售提早反彈 (YoY大於3個月前)", val: retail_yoy ? `YoY ${retail_yoy.yoy_now}%` : "N/A", met: !!(retail_yoy && retail_yoy.trend_rebound) },
-      { desc: "投資信心恢復 (耐久財YoY反彈或 > 0)", val: dgorder_yoy ? `YoY ${dgorder_yoy.yoy_now}%` : "N/A", met: !!(dgorder_yoy && (dgorder_yoy.trend_rebound || dgorder_yoy.yoy_now > 0)) }
+      { desc: "貨幣政策寬鬆 (利率趨降或 < 2.5%)", val: fed ? `${fed.latest}% (3個月前: ${fed.prev}%)` : "N/A", met: !!(fed && (fed.trend_down || fed.latest < 2.5)) },
+      { desc: "就業落底反轉 (初領失業金距低點 < 5%)", val: icsa_peak ? `反彈 ${icsa_peak.pct_from_min}% (谷底: ${icsa_peak.min})` : "N/A", met: !!(icsa_peak && icsa_peak.pct_from_min < 5.0) },
+      { desc: "零售提早反彈 (YoY大於3個月前)", val: retail_yoy ? `YoY ${retail_yoy.yoy_now}% (3個月前: ${retail_yoy.yoy_3m_ago}%)` : "N/A", met: !!(retail_yoy && retail_yoy.trend_rebound) },
+      { desc: "投資信心恢復 (耐久財YoY反彈或 > 0)", val: dgorder_yoy ? `YoY ${dgorder_yoy.yoy_now}% (3個月前: ${dgorder_yoy.yoy_3m_ago}%)` : "N/A", met: !!(dgorder_yoy && (dgorder_yoy.trend_rebound || dgorder_yoy.yoy_now > 0)) }
     ],
     growth: [
       { desc: "就業穩健擴張 (非農就業 YoY > 1.0%)", val: payems ? `YoY ${payems.yoy}%` : "N/A", met: !!(payems && payems.yoy > 1.0) },
@@ -131,12 +132,12 @@ export default defineEventHandler(async (event) => {
     ],
     boom_warning: [
       { desc: "殖利率倒掛 (10減2年利差 < 0)", val: t10y2y ? `${t10y2y.latest}%` : "N/A", met: !!(t10y2y && t10y2y.latest < 0) },
-      { desc: "就業U型反轉 (初領失業金距低點 > 15%)", val: icsa_peak ? `反彈 ${icsa_peak.pct_from_min}%` : "N/A", met: !!(icsa_peak && icsa_peak.pct_from_min > 15.0) },
+      { desc: "就業U型反轉 (初領失業金距低點 > 15%)", val: icsa_peak ? `反彈 ${icsa_peak.pct_from_min}% (谷底: ${icsa_peak.min})` : "N/A", met: !!(icsa_peak && icsa_peak.pct_from_min > 15.0) },
       { desc: "零售領先走弱 (零售 YoY < PCE YoY 且 < 2%)", val: (retail_ann && pce_ann) ? `零售 ${retail_ann.yoy}% / PCE ${pce_ann.yoy}%` : "N/A", met: !!(retail_ann && pce_ann && retail_ann.yoy < pce_ann.yoy && retail_ann.yoy < 2.0) },
-      { desc: "信心顯著下滑 (密大信心距高點跌 > 10%)", val: sentiment ? `距高點 ${sentiment.pct_from_max}%` : "N/A", met: !!(sentiment && sentiment.pct_from_max < -10.0) },
+      { desc: "信心顯著下滑 (密大信心距高點跌 > 10%)", val: sentiment ? `跌 ${sentiment.pct_from_max}% (高點: ${sentiment.max})` : "N/A", met: !!(sentiment && sentiment.pct_from_max < -10.0) },
       { desc: "民間投資衰退 (耐久財 YoY < 0)", val: dgorder_ann ? `YoY ${dgorder_ann.yoy}%` : "N/A", met: !!(dgorder_ann && dgorder_ann.yoy < 0) },
       { desc: "政府支出下滑 (地方政府支出 YoY < 0)", val: govt ? `YoY ${govt.yoy}%` : "N/A", met: !!(govt && govt.yoy < 0) },
-      { desc: "庫存水位攀升 (庫存比大於低點 5%)", val: isratio ? `${isratio.latest}` : "N/A", met: !!(isratio && isratio.min > 0 && isratio.latest > isratio.min * 1.05) },
+      { desc: "庫存水位攀升 (庫存比大於低點 5%)", val: isratio ? `${isratio.latest} (低點: ${isratio.min})` : "N/A", met: !!(isratio && isratio.min > 0 && isratio.latest > isratio.min * 1.05) },
       { desc: "違約率雙破表 (消費與企業違約皆 > 10%)", val: (dr_con && dr_bus) ? `消費 ${dr_con.yoy}% / 企業 ${dr_bus.yoy}%` : "N/A", met: !!(dr_con && dr_bus && dr_con.yoy > 10.0 && dr_bus.yoy > 10.0) }
     ],
     recession: [
@@ -144,9 +145,9 @@ export default defineEventHandler(async (event) => {
       { desc: "民間投資陷入衰退 (實質民間投資 YoY < 0)", val: gpdic1_ann ? `YoY ${gpdic1_ann.yoy}%` : "N/A", met: !!(gpdic1_ann && gpdic1_ann.yoy < 0) }
     ],
     bottom: [
-      { desc: "投資動能轉強 (GPDIC1 季增年率大於上季)", val: gpdic1_saar ? `SAAR ${gpdic1_saar.saar_now}%` : "N/A", met: !!(gpdic1_saar && gpdic1_saar.rebounding) },
-      { desc: "零售提早反彈 (YoY大於3個月前)", val: retail_yoy ? `YoY ${retail_yoy.yoy_now}%` : "N/A", met: !!(retail_yoy && retail_yoy.trend_rebound) },
-      { desc: "PMI 觸底回升 (大於 42 且未衰退)", val: pmi ? `${pmi.latest}` : "尚未輸入", met: !!(pmi && pmi.latest > 42.0 && !pmi.trend_down) }
+      { desc: "投資動能轉強 (GPDIC1 季增年率大於上季)", val: gpdic1_saar ? `SAAR ${gpdic1_saar.saar_now}% (上季: ${gpdic1_saar.saar_prev}%)` : "N/A", met: !!(gpdic1_saar && gpdic1_saar.rebounding) },
+      { desc: "零售提早反彈 (YoY大於3個月前)", val: retail_yoy ? `YoY ${retail_yoy.yoy_now}% (3個月前: ${retail_yoy.yoy_3m_ago}%)` : "N/A", met: !!(retail_yoy && retail_yoy.trend_rebound) },
+      { desc: "PMI 觸底回升 (大於 42 且未衰退)", val: pmi ? `${pmi.latest} (前值: ${prevPmiVal !== null ? prevPmiVal : '無'})` : "尚未輸入", met: !!(pmi && pmi.latest > 42.0 && !pmi.trend_down) }
     ]
   };
 
