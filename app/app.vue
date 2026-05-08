@@ -42,11 +42,50 @@
               <span v-if="isHistoryView" class="badge bg-warning text-dark mb-2">此為歷史紀錄快取</span>
             </div>
           </div>
+          
           <div class="strategy-box mb-3 shadow-sm">
             <h6 class="fw-bold text-dark mb-2">💡 投資策略最高指導</h6>
             <p class="mb-0 text-secondary" style="font-size: 0.95rem;">{{ currentData.strategy }}</p>
           </div>
-          <h6 class="mb-2 fw-bold px-1 mt-4">📊 全時期 20 大指標最新數據 <span class="small text-primary">(點擊卡片查看圖表)</span></h6>
+
+          <div v-if="currentData.details?.trend_stats" class="card shadow-sm mb-4 border-0">
+            <div class="card-header bg-white fw-bold border-bottom-0 pb-0 pt-3 text-dark">
+              <span class="fs-5 me-1">📊</span> 過去 120 天景氣趨勢比重 (含基底)
+            </div>
+            <div class="card-body row align-items-center pt-2">
+              <div class="col-md-5 text-center mb-3 mb-md-0">
+                 <ClientOnly>
+                   <Doughnut :data="trendChartData" :options="trendChartOptions" style="max-height: 180px;" />
+                 </ClientOnly>
+              </div>
+              <div class="col-md-7">
+                 <ul class="list-group list-group-flush small mb-3">
+                   <li class="list-group-item d-flex justify-content-between align-items-center px-1 py-1 border-0">
+                     <span class="text-success fw-bold">🌱 復甦期天數</span> <span class="badge bg-success rounded-pill">{{ currentData.details.trend_stats.recovery }}</span>
+                   </li>
+                   <li class="list-group-item d-flex justify-content-between align-items-center px-1 py-1 border-0">
+                     <span class="text-info text-dark fw-bold">📈 成長期天數</span> <span class="badge bg-info text-dark rounded-pill">{{ currentData.details.trend_stats.growth }}</span>
+                   </li>
+                   <li class="list-group-item d-flex justify-content-between align-items-center px-1 py-1 border-0">
+                     <span class="text-danger fw-bold">🔥 榮景期天數</span> <span class="badge bg-danger rounded-pill">{{ currentData.details.trend_stats.boom }}</span>
+                   </li>
+                   <li class="list-group-item d-flex justify-content-between align-items-center px-1 py-1 border-0 border-bottom">
+                     <span class="text-primary fw-bold">🥶 衰退期天數</span> <span class="badge bg-primary rounded-pill">{{ currentData.details.trend_stats.recession }}</span>
+                   </li>
+                 </ul>
+                 
+                 <div class="alert py-2 mb-0" :class="isTransitionAlert ? 'alert-warning' : 'alert-success'" style="font-size: 0.85rem;">
+                   <strong>🤖 判定建議：</strong><br>
+                   {{ isTransitionAlert
+                      ? `單日數據短暫波動，導致當前進入「過渡期」。但過去四個月的絕對多數為【${currentData.details.trend_stats.dominant}】。建議不輕易隨雜訊改變配置，維持防禦並靜待下月數據表態。`
+                      : `當前單日數據與過去四個月的趨勢吻合。主流狀態已確立為【${currentData.details.trend_stats.dominant}】，請放心堅定執行該時期的策略配置。`
+                   }}
+                 </div>
+              </div>
+            </div>
+          </div>
+
+          <h6 class="mb-2 fw-bold px-1 mt-4">📉 全時期 20 大指標最新數據 <span class="small text-primary">(點擊卡片查看圖表)</span></h6>
           <div class="row g-2 mb-4">
             <div class="col-6" v-for="(val, key) in currentData.raw_data" :key="key">
               <div class="card data-card shadow-sm h-100 border clickable-card" @click="openChart(key)">
@@ -139,9 +178,7 @@
             <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
           </div>
           <div class="modal-body">
-            <div v-if="isChartLoading" class="text-center py-5">
-              <div class="spinner-border text-primary" role="status"></div>
-            </div>
+            <div v-if="isChartLoading" class="text-center py-5"><div class="spinner-border text-primary" role="status"></div></div>
             <div v-else-if="chartError" class="alert alert-danger">{{ chartError }}</div>
             <ClientOnly v-else>
               <Line :data="chartData" :options="chartOptions" style="max-height: 300px;" />
@@ -155,12 +192,12 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, computed } from 'vue'
 
-// ====== 引入 Chart.js ======
-import { Chart as ChartJS, CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend, Filler } from 'chart.js'
-import { Line } from 'vue-chartjs'
-ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend, Filler)
+// ====== 引入 Chart.js，並新增 ArcElement 畫圓餅圖 ======
+import { Chart as ChartJS, CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend, Filler, ArcElement } from 'chart.js'
+import { Line, Doughnut } from 'vue-chartjs'
+ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend, Filler, ArcElement)
 
 const activeTab = ref('overview')
 const isLoading = ref(true)
@@ -171,8 +208,35 @@ const currentData = ref(null)
 const historyDates = ref([])
 const selectedDate = ref('')
 const isHistoryView = ref(false)
-
 const manualPmiInput = ref('')
+
+// ====== 🌟 計算趨勢圖表的資料 ======
+const trendChartData = computed(() => {
+  if (!currentData.value || !currentData.value.details?.trend_stats) return { labels: [], datasets: [] };
+  const stats = currentData.value.details.trend_stats;
+  return {
+    labels: ['復甦期', '成長期', '榮景期', '衰退期'],
+    datasets: [{
+      data: [stats.recovery, stats.growth, stats.boom, stats.recession],
+      backgroundColor: ['#198754', '#0dcaf0', '#dc3545', '#0d6efd'],
+      borderWidth: 1,
+      borderColor: '#ffffff'
+    }]
+  }
+});
+
+const trendChartOptions = {
+  responsive: true,
+  maintainAspectRatio: false,
+  plugins: { legend: { position: 'right', labels: { boxWidth: 12, font: { size: 11 } } } }
+};
+
+const isTransitionAlert = computed(() => {
+  if (!currentData.value) return false;
+  return currentData.value.verdict.includes('過渡期');
+});
+
+// 圖表專用狀態
 const isChartLoading = ref(false)
 const chartError = ref('')
 const activeChartTitle = ref('')
@@ -184,13 +248,8 @@ const initApp = async () => {
   try {
     const { data: dateRes } = await useFetch('/api/history-dates')
     if (dateRes.value?.success) historyDates.value = dateRes.value.dates
-
-    if (historyDates.value.length > 0) {
-      selectedDate.value = historyDates.value[0]
-      await loadHistoricalData()
-    } else {
-      await forceSyncNewData()
-    }
+    if (historyDates.value.length > 0) { selectedDate.value = historyDates.value[0]; await loadHistoricalData() } 
+    else { await forceSyncNewData() }
   } catch (err) { errorMessage.value = err.message }
 }
 
@@ -209,10 +268,9 @@ const forceSyncNewData = async () => {
   try {
     const url = manualPmiInput.value ? `/api/sync?pmi=${manualPmiInput.value}` : '/api/sync'
     const { data: syncRes } = await useFetch(url)
-    
     if (syncRes.value?.success) {
       currentData.value = syncRes.value.data; activeTab.value = 'overview'; manualPmiInput.value = ''
-      if (syncRes.value.db_error) dbWarning.value = `即時爬蟲已成功，但 Supabase 存檔失敗！原因：${syncRes.value.db_error}`
+      if (syncRes.value.db_error) dbWarning.value = `存檔失敗！原因：${syncRes.value.db_error}`
       else {
         const { data: dateRes } = await useFetch('/api/history-dates')
         if (dateRes.value?.success) historyDates.value = dateRes.value.dates
@@ -224,7 +282,7 @@ const forceSyncNewData = async () => {
 
 let bsModal = null
 const openChart = async (keyName) => {
-  if (keyName.includes('ISM PMI')) { alert('ISM PMI 數據已改為手動輸入與動態繼承機制，此指標暫不提供歷史折線圖。'); return }
+  if (keyName.includes('ISM PMI')) { alert('ISM PMI 此指標暫不提供歷史折線圖。'); return }
   activeChartTitle.value = keyName; isChartLoading.value = true; chartError.value = ''
   if (!bsModal) bsModal = new window.bootstrap.Modal(document.getElementById('chartModal'))
   bsModal.show()
@@ -233,8 +291,8 @@ const openChart = async (keyName) => {
     const { data: chartRes } = await useFetch(`/api/chart?seriesId=${seriesId}`)
     if (chartRes.value?.success) {
       chartData.value = { labels: chartRes.value.labels, datasets: [{ label: seriesId, data: chartRes.value.values, borderColor: '#0d6efd', backgroundColor: 'rgba(13, 110, 253, 0.1)', borderWidth: 2, pointRadius: 0, fill: true, tension: 0.1 }] }
-    } else { chartError.value = chartRes.value?.error || '無法獲取該指標歷史資料' }
-  } catch (err) { chartError.value = '網路連線錯誤' } finally { isChartLoading.value = false }
+    } else { chartError.value = chartRes.value?.error || '無法獲取歷史資料' }
+  } catch (err) { chartError.value = '連線錯誤' } finally { isChartLoading.value = false }
 }
 
 onMounted(() => { initApp() })
