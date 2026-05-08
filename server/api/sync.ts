@@ -9,22 +9,14 @@ export default defineEventHandler(async (event) => {
   const query = getQuery(event)
   const manualPmiInput = query.pmi ? parseFloat(query.pmi as string) : null
 
-  // 提前去資料庫撈取「最新一筆歷史紀錄」
-  const { data: lastRecord } = await supabase
-    .from('economic_records')
-    .select('verdict, raw_data')
-    .order('date', { ascending: false })
-    .limit(1)
-    .single()
+  const { data: lastRecord } = await supabase.from('economic_records').select('verdict, raw_data').order('date', { ascending: false }).limit(1).single()
 
   let prevPmiVal = null
   if (lastRecord?.raw_data?.['ISM PMI (製造業採購經理人)']) {
-    const prevStr = lastRecord.raw_data['ISM PMI (製造業採購經理人)']
-    const match = prevStr.match(/[\d.]+/)
+    const match = lastRecord.raw_data['ISM PMI (製造業採購經理人)'].match(/[\d.]+/)
     if (match) prevPmiVal = parseFloat(match[0])
   }
 
-  // 智慧 PMI 處理邏輯
   let pmi = null
   if (manualPmiInput !== null && !isNaN(manualPmiInput)) {
     pmi = { latest: manualPmiInput, trend_down: prevPmiVal !== null ? manualPmiInput < prevPmiVal : false }
@@ -32,92 +24,75 @@ export default defineEventHandler(async (event) => {
     pmi = { latest: prevPmiVal, trend_down: false }
   }
 
-  // ================= 1. 底層爬蟲與時間序列演算法 =================
   async function fetchFredData(seriesId: string, daysBack: number) {
     try {
       const startDate = new Date(); startDate.setDate(startDate.getDate() - daysBack);
-      const startStr = startDate.toISOString().split('T')[0];
-      const url = `https://api.stlouisfed.org/fred/series/observations?series_id=${seriesId}&api_key=${apiKey}&file_type=json&observation_start=${startStr}`;
+      const url = `https://api.stlouisfed.org/fred/series/observations?series_id=${seriesId}&api_key=${apiKey}&file_type=json&observation_start=${startDate.toISOString().split('T')[0]}`;
       const response = await fetch(url);
       const data = await response.json();
-      return data.observations.filter((obs: any) => obs.value !== '.').map((obs: any) => ({
-        date: new Date(obs.date), value: parseFloat(obs.value)
-      }));
+      return data.observations.filter((o: any) => o.value !== '.').map((o: any) => ({ date: new Date(o.date), value: parseFloat(o.value) }));
     } catch { return []; }
   }
 
-  function getNearestObs(data: any[], targetDate: Date) {
-    if (data.length === 0) return { date: targetDate, value: 0 };
-    return data.reduce((closest, current) => {
-      return Math.abs(current.date.getTime() - targetDate.getTime()) < Math.abs(closest.date.getTime() - targetDate.getTime()) ? current : closest;
-    });
+  function getNearest(data: any[], target: Date) {
+    if (data.length === 0) return { date: target, value: 0 };
+    return data.reduce((a, b) => Math.abs(b.date.getTime() - target.getTime()) < Math.abs(a.date.getTime() - target.getTime()) ? b : a);
   }
 
   async function fetchAnnualGrowth(seriesId: string) {
     const data = await fetchFredData(seriesId, 1825);
     if (data.length < 4) return null;
     const latest = data[data.length - 1];
-    const targetDate = new Date(latest.date); targetDate.setFullYear(targetDate.getFullYear() - 1);
-    const obs1y = getNearestObs(data, targetDate);
-    const yoy = ((latest.value - obs1y.value) / obs1y.value) * 100;
-    return { latest: Number(latest.value.toFixed(2)), yoy: Number(yoy.toFixed(2)) };
+    const target = new Date(latest.date); target.setFullYear(target.getFullYear() - 1);
+    const obs1y = getNearest(data, target);
+    return { latest: Number(latest.value.toFixed(2)), yoy: Number((((latest.value - obs1y.value) / obs1y.value) * 100).toFixed(2)) };
   }
 
   async function fetchTrendData(seriesId: string, days = 365) {
     const data = await fetchFredData(seriesId, days);
     if (data.length < 2) return null;
     const latest = data[data.length - 1];
-    const targetDate = new Date(latest.date); targetDate.setDate(targetDate.getDate() - 90);
-    const obs3m = getNearestObs(data, targetDate);
+    const target = new Date(latest.date); target.setDate(target.getDate() - 90);
+    const obs3m = getNearest(data, target);
     const change = ((latest.value - obs3m.value) / obs3m.value) * 100;
-    // 🌟 修改：新增回傳 3 個月前的數值 (prev)
     return { latest: Number(latest.value.toFixed(2)), prev: Number(obs3m.value.toFixed(2)), change_3m: Number(change.toFixed(2)), trend_down: change < 0 };
   }
 
   async function fetchYoyData(seriesId: string) {
     const data = await fetchFredData(seriesId, 1095);
     if (data.length < 16) return null;
-    const monthlyMap = new Map();
-    data.forEach(obs => { monthlyMap.set(`${obs.date.getFullYear()}-${obs.date.getMonth()}`, obs) });
-    const dataM = Array.from(monthlyMap.values());
+    const dataM = Array.from(data.reduce((map, obs) => map.set(`${obs.date.getFullYear()}-${obs.date.getMonth()}`, obs), new Map()).values());
     if (dataM.length < 16) return null;
-    const latest = dataM[dataM.length - 1];
-    const m12Ago = dataM[dataM.length - 13], m3Ago = dataM[dataM.length - 4], m15Ago = dataM[dataM.length - 16];
-    const yoy_now = ((latest.value - m12Ago.value) / m12Ago.value) * 100;
-    const yoy_3m_ago = ((m3Ago.value - m15Ago.value) / m15Ago.value) * 100;
-    return { latest: Number(latest.value.toFixed(2)), yoy_now: Number(yoy_now.toFixed(2)), trend_rebound: yoy_now > yoy_3m_ago, yoy_3m_ago: Number(yoy_3m_ago.toFixed(2)) };
+    const latest = dataM[dataM.length - 1], m12Ago = dataM[dataM.length - 13], m3Ago = dataM[dataM.length - 4], m15Ago = dataM[dataM.length - 16];
+    const yoy_now = ((latest.value - m12Ago.value) / m12Ago.value) * 100, yoy_3m = ((m3Ago.value - m15Ago.value) / m15Ago.value) * 100;
+    return { latest: Number(latest.value.toFixed(2)), yoy_now: Number(yoy_now.toFixed(2)), trend_rebound: yoy_now > yoy_3m, yoy_3m_ago: Number(yoy_3m.toFixed(2)) };
   }
 
   async function fetchPeakReversal(seriesId: string, lookbackYears = 3) {
     const data = await fetchFredData(seriesId, lookbackYears * 365 + 90);
     if (data.length < 3) return null;
-    const latest = data[data.length - 1];
-    const cutoffDate = new Date(latest.date); cutoffDate.setFullYear(cutoffDate.getFullYear() - lookbackYears);
-    const periodData = data.filter(obs => obs.date >= cutoffDate);
-    const values = (periodData.length > 0 ? periodData : data).map(obs => obs.value);
-    const min = Math.min(...values), max = Math.max(...values);
+    const latest = data[data.length - 1], target = new Date(latest.date); target.setFullYear(target.getFullYear() - lookbackYears);
+    const pData = data.filter(o => o.date >= target), vals = (pData.length > 0 ? pData : data).map(o => o.value);
+    const min = Math.min(...vals), max = Math.max(...vals);
     return { latest: Number(latest.value.toFixed(2)), min: Number(min.toFixed(2)), max: Number(max.toFixed(2)), pct_from_min: Number((((latest.value - min) / min) * 100).toFixed(2)), pct_from_max: Number((((latest.value - max) / max) * 100).toFixed(2)) };
   }
 
   async function fetchSaarData(seriesId: string) {
     const data = await fetchFredData(seriesId, 730);
     if (data.length < 3) return null;
-    const quarterlyMap = new Map();
-    data.forEach(obs => { quarterlyMap.set(`${obs.date.getFullYear()}-Q${Math.floor(obs.date.getMonth() / 3) + 1}`, obs) });
-    const dataQ = Array.from(quarterlyMap.values());
+    const dataQ = Array.from(data.reduce((map, obs) => map.set(`${obs.date.getFullYear()}-Q${Math.floor(obs.date.getMonth() / 3) + 1}`, obs), new Map()).values());
     if (dataQ.length < 3) return null;
     const curr = dataQ[dataQ.length - 1].value, prev1 = dataQ[dataQ.length - 2].value, prev2 = dataQ[dataQ.length - 3].value;
     const saar_now = (Math.pow(curr / prev1, 4) - 1) * 100, saar_prev = (Math.pow(prev1 / prev2, 4) - 1) * 100;
     return { latest: Number(curr.toFixed(2)), saar_now: Number(saar_now.toFixed(2)), saar_prev: Number(saar_prev.toFixed(2)), rebounding: saar_now > saar_prev };
   }
 
-  // ================= 2. 平行發送 19 個 API 請求 =================
   const [fed, icsa_peak, payems, retail_yoy, retail_ann, pce_ann, pcec96_ann, sentiment, dgorder_yoy, dgorder_ann, pnfi, prfi, gpdic1_ann, gpdic1_saar, cpi, t10y2y, govt, isratio, dr_con, dr_bus] = await Promise.all([
     fetchTrendData('FEDFUNDS'), fetchPeakReversal('ICSA', 2), fetchAnnualGrowth('PAYEMS'), fetchYoyData('RSAFS'), fetchAnnualGrowth('RSAFS'), fetchAnnualGrowth('PCE'), fetchAnnualGrowth('PCEC96'), fetchPeakReversal('UMCSENT', 1), fetchYoyData('DGORDER'), fetchAnnualGrowth('DGORDER'), fetchAnnualGrowth('PNFI'), fetchAnnualGrowth('PRFI'), fetchAnnualGrowth('GPDIC1'), fetchSaarData('GPDIC1'), fetchAnnualGrowth('CPIAUCSL'), fetchTrendData('T10Y2Y'), fetchAnnualGrowth('SLEXPND'), fetchPeakReversal('ISRATIO', 1), fetchAnnualGrowth('DRCLACBS'), fetchAnnualGrowth('DRBLACBS')
   ]);
 
-  // ================= 3. 🌟 全透視診斷陣列 (包含「前值」顯示) =================
-  const details = {
+  // 把 details 宣告為 any，讓我們可以塞入 trend_stats
+  const details: any = {
     recovery: [
       { desc: "貨幣政策寬鬆 (利率趨降或 < 2.5%)", val: fed ? `${fed.latest}% (3個月前: ${fed.prev}%)` : "N/A", met: !!(fed && (fed.trend_down || fed.latest < 2.5)) },
       { desc: "就業落底反轉 (初領失業金距低點 < 5%)", val: icsa_peak ? `反彈 ${icsa_peak.pct_from_min}% (谷底: ${icsa_peak.min})` : "N/A", met: !!(icsa_peak && icsa_peak.pct_from_min < 5.0) },
@@ -151,13 +126,12 @@ export default defineEventHandler(async (event) => {
     ]
   };
 
-  // 自動統計得分
   const scores = {
-    recovery: details.recovery.filter(d => d.met).length,
-    growth: details.growth.filter(d => d.met).length,
-    boom_warning: details.boom_warning.filter(d => d.met).length,
-    recession: details.recession.filter(d => d.met).length,
-    bottom: details.bottom.filter(d => d.met).length,
+    recovery: details.recovery.filter((d: any) => d.met).length,
+    growth: details.growth.filter((d: any) => d.met).length,
+    boom_warning: details.boom_warning.filter((d: any) => d.met).length,
+    recession: details.recession.filter((d: any) => d.met).length,
+    bottom: details.bottom.filter((d: any) => d.met).length,
   };
 
   let baseVerdict = "", strategy = "";
@@ -176,11 +150,11 @@ export default defineEventHandler(async (event) => {
     baseVerdict = "🌀 週期過渡期 (多空交雜)"; strategy = "目前多空數據交雜，可能正處於階段轉換的過渡期。建議維持股債平衡配置。";
   }
 
-  // ================= 4. 🚀 狀態記憶與「基底注入」嚴格攔截邏輯 =================
   let finalVerdict = baseVerdict;
   try {
     const { data: recentRecords } = await supabase.from('economic_records').select('verdict').gte('date', new Date(now.setDate(now.getDate() - 120)).toISOString().split('T')[0]).order('date', { ascending: false });
     const cycleOrder: Record<string, number> = { "🌱 景氣復甦期": 1, "📈 穩定成長期": 2, "🥂 榮景期 (高檔熱絡)": 3, "🔥 榮景期 (末端) - 衰退轉折危機": 3, "🥶 衰退期 (主跌段) - 景氣嚴冬": 4, "🥶 衰退期 (末端) - 底部反轉曙光已現": 4, "🌀 週期過渡期 (Transition)": 0, "🌀 週期過渡期 (多空交雜)": 0 };
+    
     const counts: Record<string, number> = { "🥂 榮景期 (高檔熱絡)": 90 };
     let dominantVerdict = "🥂 榮景期 (高檔熱絡)", maxCount = 90;
 
@@ -193,15 +167,23 @@ export default defineEventHandler(async (event) => {
       }
     }
 
+    // 🌟 將統計資料打包放進 details 物件中送給前端畫圖
+    details.trend_stats = {
+      recovery: counts["🌱 景氣復甦期"] || 0,
+      growth: counts["📈 穩定成長期"] || 0,
+      boom: (counts["🥂 榮景期 (高檔熱絡)"] || 0) + (counts["🔥 榮景期 (末端) - 衰退轉折危機"] || 0),
+      recession: (counts["🥶 衰退期 (主跌段) - 景氣嚴冬"] || 0) + (counts["🥶 衰退期 (末端) - 底部反轉曙光已現"] || 0),
+      dominant: dominantVerdict
+    };
+
     const prevW = cycleOrder[dominantVerdict] || 0, curW = cycleOrder[baseVerdict] || 0;
     if (prevW !== 0 && curW !== 0) {
       if (prevW === 3 && (curW === 1 || curW === 2)) {
         finalVerdict = "🌀 週期過渡期 (Transition)";
-        strategy = `⚠️ 【雜訊過濾】過去四個月大趨勢為【${dominantVerdict}】。今日數據 (${baseVerdict}) 判定為短期雜訊。建議維持「榮景期」策略。`;
       } else if (curW < prevW && !(prevW === 4 && curW === 1)) {
-        finalVerdict = "🌀 週期過渡期 (Transition)"; strategy = `⚠️ 【順序逆行】大趨勢為【${dominantVerdict}】，無法逆行回【${baseVerdict}】。`;
+        finalVerdict = "🌀 週期過渡期 (Transition)"; 
       } else if (curW - prevW > 1 && !(prevW === 4 && curW === 1)) {
-        finalVerdict = "🌀 週期過渡期 (Transition)"; strategy = `⚠️ 【跳躍警報】從【${dominantVerdict}】跳至【${baseVerdict}】。判定為過渡期。`;
+        finalVerdict = "🌀 週期過渡期 (Transition)"; 
       }
     }
   } catch (err) { console.log("無法取得歷史", err) }
